@@ -2,81 +2,120 @@
 
 Magnum is a Shopify-focused server-side tracking system built to maximize **truthful conversion matching** for Meta.
 
-The main idea is simple: do not wait until the order exists and then try to guess where it came from. Preserve the customer's identity and ad-click context during the whole journey, connect that browser journey to Shopify's checkout, then connect the checkout to the final order.
-
-Magnum will use a **third-party collector domain** such as:
-
-```text
-https://d.magnum.com
-```
-
-The collector does **not** need to live on `teenwear.eu`. However, the Shopify Web Pixel will still use Shopify's top-frame `browser.localStorage`, `browser.sessionStorage` and cookie APIs to preserve identifiers on the storefront when consent allows it.
-
-> Important: `d.magnum.com` is the intended production pattern. We must only use a hostname/domain that we actually control before deployment.
+The core idea is not to wait until an order exists and then guess where it came from. Magnum preserves identity and ad-click context during the customer journey, links that journey to Shopify commerce identifiers, then joins the final verified order back to the strongest available browser identity.
 
 ---
 
-## Primary objective
+# Architecture decision: Shopify App Proxy first
 
-For every real Shopify order, Magnum should answer:
+Normal storefront tracking will **not call the Magnum backend domain directly from the browser**.
 
-```text
-Which browser visitor created this order?
-Which Shopify clientId belonged to that visitor?
-Which cart and checkout belonged to the visitor?
-Was there a real Meta click?
-Which fbclid / fbc / fbp were present?
-Which customer match keys were available?
-Which data was finally sent to Meta?
-```
-
-The success metric is not "send more Purchase events".
-
-The success metric is:
+The primary storefront path is:
 
 ```text
-real Shopify order
-        -> deterministic browser/checkout identity
-        -> strongest legitimate Meta match payload
-        -> one deduplicated Purchase event
+Customer browser
+      |
+      | POST /apps/magnum/e
+      v
+Teenwear / Shopify storefront origin
+      |
+      | Shopify App Proxy
+      v
+https://d.magnus.com/proxy/e
+      |
+      v
+Google Cloud Run - Magnum API
 ```
+
+Recommended Shopify app configuration:
+
+```toml
+[app_proxy]
+url = "https://d.magnus.com/proxy"
+prefix = "apps"
+subpath = "magnum"
+```
+
+This creates the merchant-side route:
+
+```text
+/apps/magnum
+```
+
+and forwards child paths to the Magnum backend.
+
+The browser therefore sends:
+
+```text
+POST /apps/magnum/e
+```
+
+and Shopify forwards it to:
+
+```text
+POST https://d.magnus.com/proxy/e
+```
+
+## Why we prefer this
+
+A Shopify App Proxy gives Magnum useful properties:
+
+- storefront collection starts on the merchant's Shopify origin
+- Shopify forwards the request to one central Magnum backend
+- no browser CORS setup is needed for storefront collection
+- Shopify signs the proxy request
+- Shopify supplies the shop domain
+- Shopify can supply `logged_in_customer_id`
+- Shopify forwards the original client IP in `X-Forwarded-For`
+
+This does not make browser tracking unblockable. It is simply a stronger storefront collection path than exposing every normal storefront event as a direct browser request to `d.magnus.com`.
+
+Shopify App Proxy also strips cookies from the forwarded request and strips `Set-Cookie` from the response. Magnum therefore sends required browser identifiers explicitly in the event body instead of relying on cookies reaching the backend.
 
 ---
 
-# Architecture
+# Important Web Pixel limitation
+
+Shopify Web Pixels run inside a sandbox. A Web Pixel cannot be treated like normal top-frame theme JavaScript, and same-origin App Proxy fetches can be rejected by Shopify's pixel sandbox.
+
+For that reason Magnum uses a **hybrid architecture**.
 
 ```text
-Shopify storefront / checkout
-        |
-        | Shopify Web Pixel
-        |
-        | HTTPS
-        v
-   d.magnum.com
+STOREFRONT
+Theme App Extension / App Embed
         |
         v
-Google Cloud HTTPS Load Balancer
+/apps/magnum/e
         |
         v
-Google Cloud Run: magnum-api
+Shopify App Proxy
         |
-        +--------------------+
-        |                    |
-        v                    v
-Cloud SQL PostgreSQL      Pub/Sub
-        |                    |
-        |                    v
-        |              magnum-worker
-        |                    |
-        |                    v
-        |                 Meta CAPI
+        v
+d.magnus.com
+
+CHECKOUT
+Shopify Web Pixel
         |
-        ^
+        v
+external Magnum pixel endpoint
         |
-Shopify order webhook / Admin GraphQL
+        v
+d.magnus.com
+
+SHOPIFY SERVER
+Order webhook / Admin GraphQL
+        |
+        v
+d.magnus.com
 ```
 
-## Hosting
+The checkout Web Pixel is an enrichment channel, not the source of truth for purchases.
+
+The verified Shopify order remains the source of truth.
+
+---
+
+# Google Cloud production stack
 
 Magnum will run on Google Cloud Platform.
 
@@ -88,293 +127,367 @@ europe-west3 (Frankfurt)
 
 Components:
 
-- **Cloud Run** — collector/API and asynchronous workers
-- **Cloud SQL PostgreSQL** — durable identity graph, events and deduplication state
-- **Pub/Sub** — reliable outbound event queue and retries
-- **Secret Manager** — Meta token, Shopify secrets and database credentials
-- **Cloud Logging + Monitoring** — event failures, queue backlog, match quality and health checks
+- **Cloud Run** - public collector API and asynchronous workers
+- **Cloud SQL PostgreSQL** - durable identity graph and event state
+- **Pub/Sub** - outbound event queue and retry pipeline
+- **Secret Manager** - Shopify secrets, Meta tokens and credentials
+- **Cloud Logging / Monitoring** - event failures, queue backlog and match diagnostics
 
-The application must remain stateless at the Cloud Run process level. Identity and deduplication must never depend on an in-memory `Map` or `Set` in production.
+Cloud Run processes are stateless. Production identity, retries and deduplication must never depend only on an in-memory JavaScript `Map` or `Set`.
 
 ---
 
-# The identity graph
+# Magnum identity graph
 
-Magnum's core is not Meta CAPI. The core is the identity graph.
+Meta CAPI itself is not the difficult part of Magnum.
 
-A single customer journey can gradually accumulate these identifiers:
+The difficult part is building a reliable graph that links the final Shopify order back to the correct customer journey.
+
+A journey can accumulate:
 
 ```text
 mg_visitor_id
 mg_session_id
-Shopify clientId
-Shopify cart id/token
+Shopify logged_in_customer_id
+Shopify Web Pixel clientId
+Shopify cart token
 Shopify checkout token
 Shopify customer id
 Shopify order id
-email hash
-phone hash
-name/address hashes where permitted
+email
+phone
+name
+city/state/postal/country
 fbclid
 fbc
 fbp
-UTM data
+UTM parameters
 landing URL
 referrer
+client IP
+user agent
 ```
 
 Example:
 
 ```text
-mg_visitor_id:       mg_v_8d1...
-shopify_client_id:  9c8...
-cart_token:          abc...
-checkout_token:      def...
-customer_id:         gid://shopify/Customer/...
-order_id:            gid://shopify/Order/...
-fbc:                 fb.1.1787....AQ...
-fbp:                 fb.1.1787....123...
+Meta ad click
+   |
+   v
+fbclid / fbc / fbp
+   |
+   v
+mg_visitor_id
+   |
+   +---- Shopify logged-in customer id
+   |
+   +---- Shopify cart token
+   |          |
+   |          v
+   |     Order.cartToken
+   |
+   +---- Web Pixel clientId
+   |
+   +---- checkout token
+              |
+              v
+       Order.checkoutToken
+              |
+              v
+        Shopify order
+              |
+              v
+       Meta CAPI Purchase
 ```
-
-These values are not interchangeable. They are independent evidence that the same journey belongs together.
 
 ---
 
-# Matching priority
+# Deterministic matching priority
 
-Magnum will prefer deterministic links and will not invent attribution.
+Magnum prefers deterministic commerce identifiers over probabilistic guessing.
 
-## Level 1 — checkout token
+## 1. Checkout token
 
-This is the strongest commerce bridge.
-
-Shopify Web Pixel exposes `checkout.token` during checkout events. Shopify Admin GraphQL exposes `Order.checkoutToken` on the final order.
+When the checkout Web Pixel reaches Magnum:
 
 ```text
-browser checkout_started
-checkout.token = XYZ
-        |
-        v
-Magnum stores XYZ -> visitor
-        |
-        v
-Shopify order
-Order.checkoutToken = XYZ
-        |
-        v
-exact identity match
+checkout.token
+      |
+      v
+stored against browser identity
+      |
+      v
+Order.checkoutToken
+      |
+      v
+exact order link
 ```
 
-## Level 2 — cart token / cart id
+## 2. Cart token
 
-Shopify also exposes cart identity and the Admin GraphQL Order object includes `cartToken` in API version 2026-07 and later.
+The storefront proxy collector reads the current Shopify cart and stores its token:
 
-This becomes a second deterministic bridge.
+```text
+GET /cart.js
+```
 
-## Level 3 — Shopify clientId + Magnum visitor ID
+The final order can expose `Order.cartToken` through Shopify Admin GraphQL.
 
-Every Shopify Web Pixel event includes Shopify's `event.clientId`.
+This creates another strong bridge:
 
-Magnum stores both:
+```text
+mg_visitor_id
+    |
+    v
+cart token
+    |
+    v
+Order.cartToken
+    |
+    v
+order
+```
+
+This bridge is especially important because it does not depend on the checkout Web Pixel successfully sending its enrichment request.
+
+## 3. Shopify customer context
+
+A valid signed App Proxy request can include:
+
+```text
+logged_in_customer_id
+```
+
+Magnum can attach this server-verified Shopify customer signal to the browser visitor.
+
+## 4. Shopify Web Pixel clientId
+
+Checkout and standard Web Pixel events contain Shopify's `clientId`.
+
+Magnum stores:
 
 ```text
 mg_visitor_id <-> shopify_client_id
 ```
 
-This gives us another stable browser-side relationship across customer events.
+as another identity relationship.
 
-## Level 4 — customer identifiers
+## 5. Customer match identifiers
 
-When allowed and available, checkout can provide:
-
-- email
-- phone
-- first name
-- last name
-- city
-- province/state
-- postal code
-- country
-- Shopify customer ID
-
-Raw protected customer data should not be retained unnecessarily. The planned ingestion flow is:
+When legitimately available and permitted, Magnum normalizes:
 
 ```text
-TLS request
-   -> normalize on Magnum server
-   -> SHA-256 where Meta requires hashing
-   -> persist normalized hashes / minimum required data
-   -> discard unnecessary raw values
+email
+phone
+first name
+last name
+city
+state/province
+postal code
+country
+Shopify customer ID
 ```
 
-The order webhook runs the same normalization so checkout identity can be linked to the final order.
+before creating the Meta CAPI `user_data` payload.
 
-## Level 5 — network context
+---
 
-The collector/API can capture the request IP and the Web Pixel provides browser user-agent context.
+# Advanced Matching target
 
-IP and user agent are useful Meta match keys, but Magnum must not use IP-only probabilistic matching to claim that an order came from a particular ad click.
+For a strong Purchase, Magnum aims to provide as many real Meta match keys as the order legitimately contains.
+
+Planned `user_data` coverage:
+
+```text
+em                  hashed email
+ph                  hashed phone
+fn                  hashed first name
+ln                  hashed last name
+ct                  hashed city
+st                  hashed state/province
+zp                  hashed postal code
+country             hashed ISO country
+external_id         hashed Shopify customer / Magnum identity
+fbc                 raw Meta click browser identifier
+fbp                 raw Meta browser identifier
+client_ip_address   raw trusted client IP
+client_user_agent   raw browser user agent
+```
+
+Rules:
+
+- never create fake email/phone/name values
+- never fabricate `fbclid`
+- never fabricate `fbc` without a real `fbclid`
+- never hash `fbc` or `fbp`
+- do not guess missing phone country codes without valid country context
+- do not use a session ID as a long-lived customer external ID
+- preserve stable external IDs across relevant events
+
+The objective is high-quality matching, not artificially inflating an EMQ number.
 
 ---
 
 # Meta click preservation
 
-A Meta ad landing can contain:
+When a user lands from Meta with:
 
 ```text
 ?fbclid=AQ...
 ```
 
-Magnum captures the real `fbclid` immediately and preserves a matching `fbc` value.
+Magnum captures the real click immediately after consent permits marketing processing.
 
-Expected format:
+If a valid `_fbc` already exists for that exact click, Magnum preserves it.
 
-```text
-fb.1.<timestamp_in_milliseconds>.<fbclid>
-```
-
-Example:
+If the real `fbclid` exists but `_fbc` is not available yet, Magnum can create:
 
 ```text
-fb.1.1787875123456.AQ...
+fb.1.<creation_timestamp_ms>.<fbclid>
 ```
 
-Rules:
+The timestamp is frozen for that click. Magnum must not regenerate a different `fbc` timestamp on every page or event.
 
-1. Never fabricate `fbc` without a real `fbclid`.
-2. Prefer an existing valid `_fbc` cookie when it represents the same click.
-3. If a real `fbclid` is present and `_fbc` is not yet available, construct `fbc` once with the capture timestamp in **milliseconds**.
-4. Preserve the exact value. Do not recreate it on every page because changing the timestamp creates different click identities for the same click.
-5. Read `_fbp` when available and preserve the last known value as a fallback.
-6. Do not hash `fbc` or `fbp`.
-
-Magnum stores attribution as a **touchpoint history**, not only one mutable field.
-
-Example:
-
-```text
-2026-08-27 13:40
-Meta click A
-campaign = Back To School
-fbc = ...A
-
-2026-08-28 18:10
-Meta click B
-campaign = Jeans
-fbc = ...B
-
-2026-08-28 18:31
-Purchase
-```
-
-This lets Magnum understand which legitimate touch existed before the purchase instead of overwriting historical evidence blindly.
+`_fbp` is captured when available and the last valid value is retained as browser identity evidence.
 
 ---
 
-# First collector: Shopify Custom Pixel
+# Storefront proxy collector
 
-The first executable collector is located at:
+The first proxy-first storefront prototype is:
 
 ```text
-shopify-pixel/magnum-custom-pixel.js
+shopify-proxy/magnum-storefront.js
 ```
 
-It is intentionally written as a **Shopify Custom Pixel** first because it can be installed and tested directly in Shopify Admin without building the full Shopify app extension first.
-
-Later, after the data model is proven, it should be migrated into a proper Magnum Shopify App Pixel.
-
-The collector subscribes only to an explicit allowlist of useful Shopify events:
+Target installation:
 
 ```text
-page_viewed
-product_viewed
-product_added_to_cart
-cart_viewed
-checkout_started
-checkout_contact_info_submitted
-checkout_address_info_submitted
-checkout_shipping_info_submitted
-payment_info_submitted
-checkout_completed
+Shopify Theme App Extension / App Embed
 ```
 
-For each allowed event it sends a normalized envelope containing:
+The prototype currently:
+
+- loads Shopify Customer Privacy API
+- starts marketing/analytics collection only when processing is allowed
+- creates/restores `mg_vid`
+- creates/restores `mg_sid`
+- captures `fbclid`
+- preserves `fbc`
+- captures `_fbp`
+- stores first and last attribution touches
+- reads `/cart.js`
+- captures the Shopify cart token
+- watches Shopify AJAX cart mutations and resyncs identity
+- sends storefront events to `/apps/magnum/e`
+
+The collector sends identifiers explicitly in JSON because Shopify does not forward browser cookies through App Proxy.
+
+---
+
+# Shopify App Proxy authentication
+
+Every request received at:
 
 ```text
-Magnum visitor ID
-Magnum session ID
-Shopify clientId
-Shopify cart ID
-Shopify customer ID when available
-current / first / last attribution touch
-fbclid / fbc / fbp when legitimately available
-UTM parameters
-page URL / referrer
-Shopify event ID / sequence / timestamp
-checkout token when available
-minimum checkout match fields when available
-product/cart context needed for later event generation
+https://d.magnus.com/proxy/*
+```
+
+must be authenticated before Magnum trusts either its body or Shopify context.
+
+Shopify adds signed query parameters such as:
+
+```text
+shop
+logged_in_customer_id
+path_prefix
+timestamp
+signature
+```
+
+The Magnum API must:
+
+1. remove `signature`
+2. canonicalize all remaining query parameters according to Shopify's App Proxy algorithm
+3. calculate HMAC-SHA256 using the Shopify app shared secret
+4. compare signatures using a timing-safe comparison
+5. reject invalid requests
+6. reject stale/replayed requests according to Magnum replay policy
+
+Only after verification should Magnum trust:
+
+```text
+shop
+logged_in_customer_id
+X-Forwarded-For
+```
+
+The proxy body itself can then add:
+
+```text
+mg_visitor_id
+mg_session_id
+cart_token
+fbclid
+fbc
+fbp
+UTMs
+page/referrer
+user agent
 consent state
 ```
 
-It does **not** forward Shopify's entire raw event object. Explicit normalization reduces accidental collection and prevents schema changes from silently adding unnecessary data.
+---
+
+# Checkout Web Pixel
+
+The checkout Web Pixel remains valuable because Shopify can expose checkout-specific identifiers and protected customer fields that a normal theme script cannot access.
+
+Important fields include:
+
+```text
+Shopify event.clientId
+checkout.token
+checkout email
+checkout phone
+shipping/billing name
+city
+province/state
+postal code
+country
+order/customer IDs when available
+```
+
+Because the Web Pixel sandbox cannot rely on the storefront App Proxy route, checkout enrichment is sent to a dedicated external Magnum endpoint.
+
+That direct checkout channel is **not enough by itself**. It complements the proxy-first storefront identity graph.
 
 ---
 
-# Consent model
+# Final Purchase flow
 
-Magnum will respect Shopify Customer Privacy state.
-
-The first Meta-focused collector requires eligible analytics + marketing consent before it persists marketing identity or sends marketing-attribution data.
+The final purchase should be generated from verified Shopify server data.
 
 ```text
-analyticsProcessingAllowed = true
-marketingAllowed = true
+1. Storefront proxy captures Meta + Magnum + cart identity
+2. Checkout Web Pixel adds checkout/client/customer identity when available
+3. Shopify confirms the real order
+4. Magnum fetches/enriches order through Admin GraphQL when necessary
+5. Magnum resolves checkoutToken and/or cartToken back to browser identity
+6. Customer match fields are normalized and hashed where required
+7. Purchase event is inserted into durable outbound queue
+8. Worker sends Meta CAPI
+9. Temporary failures retry
+10. Permanent validation failures are retained for debugging
 ```
 
-The pixel also listens for Shopify's `visitorConsentCollected` event so state can change during the session.
-
-We will not build the product around bypassing a customer's reject decision.
+The system should never create a Meta Purchase just because the browser says checkout completed if Shopify has not confirmed the order.
 
 ---
 
-# Browser collection vs Shopify server truth
+# Purchase deduplication
 
-Browser collection gives us attribution context.
-
-Shopify server events give us purchase truth.
-
-The final Purchase should therefore be based primarily on Shopify's order lifecycle, not on trusting only the browser success page.
-
-```text
-Browser
-  -> captures fbclid/fbc/fbp + clientId + checkoutToken
-
-Shopify
-  -> confirms the actual order
-
-Magnum
-  -> joins both datasets
-  -> creates final Purchase
-  -> sends Meta CAPI
-```
-
-This is important because the browser can close, an ad blocker can stop the collector request, or the customer can complete checkout in a way where the browser event is unreliable.
-
-A third-party `d.magnum.com` collector can also be blocked by some privacy/ad-blocking tools. That is a real tradeoff of not using a first-party collection hostname. The Shopify order webhook still protects purchase delivery, but blocked browser collection can reduce the amount of click identity available for matching.
-
----
-
-# Purchase delivery and deduplication
-
-Magnum will eventually support both:
-
-```text
-browser Purchase
-server Purchase
-```
-
-When both are used, they must share the same deterministic Meta `event_id`.
+When Magnum also sends a browser Purchase, browser and server must share one deterministic Meta `event_id`.
 
 Example:
 
@@ -382,81 +495,61 @@ Example:
 magnum_purchase_<shopify_order_id>
 ```
 
-Then:
-
 ```text
-browser Purchase  ----+
-                     +--> Meta sees one Purchase
-server Purchase   ----+
+browser Purchase ----+
+                     +----> Meta: one Purchase
+server Purchase  ----+
 ```
 
-Server delivery is queued through Pub/Sub and stored in PostgreSQL before outbound delivery.
-
-Temporary Meta errors use exponential retries. Permanent API validation errors move the event to a failed/dead-letter state for debugging instead of retrying forever.
+Production idempotency is stored in PostgreSQL with unique constraints. An in-memory set is not sufficient.
 
 ---
 
-# Magnum Match Score
+# Magnum Match Diagnostics
 
-Magnum will expose its own diagnostics for each order.
+Every order should eventually expose exactly why its matching is strong or weak.
 
 Example:
 
 ```text
 ORDER #12345
 
-Commerce identity
-[OK] checkout token
+Commerce bridge
 [OK] cart token
+[OK] checkout token
 [OK] Shopify clientId
 [OK] Magnum visitor ID
 
 Meta identity
-[OK] real fbclid captured
+[OK] real fbclid
 [OK] fbc
 [OK] fbp
 
-Customer identity
-[OK] email hash
-[OK] phone hash
-[OK] customer ID
-[OK] postal/country match keys
-
-Network
-[OK] IP
+Advanced matching
+[OK] email
+[OK] phone
+[OK] first/last name
+[OK] city/state/postal/country
+[OK] external ID
+[OK] client IP
 [OK] user agent
+
+Resolution path:
+Meta click -> visitor -> cart -> checkout -> order
 
 Confidence: HIGH
 ```
 
-The score is a diagnostic tool only. It must never be used to manufacture missing Meta attribution.
+A weak order should show the missing reason rather than hiding it behind one opaque score.
 
 ---
 
-# Implementation plan
+# Production data model
 
-## Phase 0 — collector prototype
-
-- [x] Define architecture
-- [x] Define identity graph
-- [x] Write first Shopify Custom Pixel collector
-- [ ] Install collector in a test Shopify environment
-- [ ] Inspect real payloads from Teenwear journeys
-
-## Phase 1 — Magnum ingestion API
-
-- [ ] `POST /v1/events`
-- [ ] Validate schema and payload size
-- [ ] Capture request IP server-side
-- [ ] Normalize identifiers
-- [ ] Persist visitor/session/event records
-- [ ] CORS / abuse protection / rate limiting
-
-## Phase 2 — PostgreSQL identity graph
-
-Tables/models for:
+Planned PostgreSQL entities:
 
 ```text
+shops
 visitors
 sessions
 shopify_clients
@@ -466,52 +559,82 @@ customers
 touchpoints
 orders
 identity_links
-raw_ingest_events (short retention / optional)
+ingest_events
 outbound_events
 delivery_attempts
 ```
 
-Add unique indexes around deterministic identifiers such as checkout token and Shopify order ID.
+Important unique/indexed identifiers include:
 
-## Phase 3 — Shopify order bridge
+```text
+shop + Shopify event ID
+shop + cart token
+shop + checkout token
+shop + order ID
+destination + Meta event ID
+```
 
-- [ ] Verified Shopify webhook ingestion
-- [ ] Fetch/order enrichment through Admin GraphQL
-- [ ] Read `Order.checkoutToken`
-- [ ] Read `Order.cartToken`
-- [ ] Read `Order.clientIp`
-- [ ] Normalize customer match data
-- [ ] Resolve order -> checkout -> visitor
+Customer PII should be minimized. Fields required only for Meta matching should be normalized and hashed as early as practical instead of retaining raw customer data indefinitely.
 
-## Phase 4 — Meta CAPI
+---
 
-- [ ] Build final `user_data`
-- [ ] email / phone / name / geography normalization + hashing
-- [ ] send raw `fbc`, `fbp`, IP and user-agent where appropriate
-- [ ] deterministic event IDs
-- [ ] queued delivery
-- [ ] retries / dead-letter handling
-- [ ] test event support
+# Implementation roadmap
 
-## Phase 5 — diagnostics
+## Phase 0 - collection prototypes
 
-- [ ] Order debugger
-- [ ] Match score
-- [ ] Missing-signal reasons
-- [ ] Meta response logging
-- [ ] attribution/touchpoint timeline
-- [ ] daily tracking-health metrics
+- [x] define identity graph
+- [x] define advanced matching keys
+- [x] build Shopify Custom Pixel prototype
+- [x] build Shopify App Proxy storefront collector prototype
+- [x] switch architecture to proxy-first storefront collection
+- [ ] create Shopify Theme App Extension / App Embed package
+- [ ] create the actual Shopify app proxy configuration
 
-## Phase 6 — production hardening
+## Phase 1 - secure proxy ingestion
 
-- [ ] move Custom Pixel into Magnum Shopify App Pixel
-- [ ] protected customer data scopes
-- [ ] retention rules
-- [ ] encryption and key management
-- [ ] deployment pipeline
-- [ ] alerting
-- [ ] load tests
-- [ ] outage simulation
+- [ ] `POST /proxy/e`
+- [ ] verify Shopify App Proxy HMAC signature
+- [ ] timestamp/replay validation
+- [ ] parse trusted `logged_in_customer_id`
+- [ ] parse trusted `X-Forwarded-For`
+- [ ] validate event schema and size
+- [ ] rate/abuse limits
+
+## Phase 2 - PostgreSQL identity graph
+
+- [ ] persist visitor/session identities
+- [ ] persist touchpoint history
+- [ ] persist cart-token mapping
+- [ ] persist Web Pixel `clientId`
+- [ ] persist checkout-token mapping
+- [ ] persist customer links
+
+## Phase 3 - Shopify server order bridge
+
+- [ ] verified Shopify order webhooks
+- [ ] Admin GraphQL enrichment
+- [ ] read `Order.cartToken`
+- [ ] read `Order.checkoutToken`
+- [ ] read trusted order/customer/network fields
+- [ ] resolve order to Magnum identity graph
+
+## Phase 4 - Meta CAPI
+
+- [ ] full advanced matching payload
+- [ ] deterministic Purchase event ID
+- [ ] durable Pub/Sub/outbox delivery
+- [ ] retry policy
+- [ ] dead-letter/permanent-error handling
+- [ ] Meta test-event support
+
+## Phase 5 - diagnostics
+
+- [ ] per-order identity timeline
+- [ ] match-key presence matrix
+- [ ] missing-signal reasons
+- [ ] Meta request/response status
+- [ ] daily collection health
+- [ ] storefront proxy vs checkout-pixel coverage comparison
 
 ---
 
@@ -519,28 +642,42 @@ Add unique indexes around deterministic identifiers such as checkout token and S
 
 Magnum will not:
 
-- create fake `fbclid` or `fbc`
-- attach an old Meta click to an unrelated order merely to increase Ads Manager attribution
-- use IP similarity alone to claim ad attribution
-- intentionally create duplicate purchases
-- persist customer marketing identifiers after a consent state says they should not be processed
-- treat Meta's reported conversions as the source of truth for store revenue
+- fabricate Meta clicks
+- fabricate `fbc`
+- attach unrelated historical clicks to orders simply to increase reported ROAS
+- claim deterministic attribution from IP similarity alone
+- intentionally bypass a visitor's Shopify privacy decision
+- treat Meta Ads Manager as the store revenue source of truth
 
-Shopify remains the source of truth for orders. Magnum improves the quality of the evidence sent to Meta.
+Shopify is the source of truth for orders.
+
+Magnum's job is to preserve and send the strongest legitimate evidence possible so Meta has the best possible chance to match eligible conversions correctly.
 
 ---
 
-# Current repository status
-
-The first server-side primitives live on the development branch and the first Shopify Custom Pixel collector lives in `shopify-pixel/`.
-
-The next concrete engineering target is:
+# Repository structure
 
 ```text
-Shopify Custom Pixel
-       -> POST /v1/events
-       -> PostgreSQL identity graph
-       -> checkoutToken bridge
-       -> Shopify order
-       -> Meta CAPI Purchase
+docs/
+    advanced-matching.md
+
+shopify-proxy/
+    magnum-storefront.js
+    README.md
+
+shopify-pixel/
+    magnum-custom-pixel.js
+    README.md
+```
+
+Current next engineering target:
+
+```text
+/apps/magnum/e
+      -> Shopify signed App Proxy request
+      -> https://d.magnus.com/proxy/e
+      -> verify signature
+      -> PostgreSQL identity graph
+      -> cartToken / checkoutToken order resolution
+      -> Meta CAPI Purchase
 ```
