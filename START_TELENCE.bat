@@ -1,77 +1,70 @@
 @echo off
 setlocal
-set "TELENCE_DIR=%~dp0"
-cd /d "%TELENCE_DIR%"
-title Telence Launcher
+cd /d "%~dp0"
+title TELENCE DEV SERVER - KEEP OPEN
 
 echo.
 echo ==========================================
-echo   TELENCE - Shopify Development Launcher
+echo   TELENCE - Shopify Development
 echo ==========================================
 echo.
+echo Keep THIS window open while using Telence.
+echo.
 
-echo [1/4] Checking Node.js...
 where node >nul 2>&1
 if errorlevel 1 (
-  echo.
   echo ERROR: Node.js is not installed.
-  echo Install Node.js 22 LTS from https://nodejs.org and run this file again.
-  echo.
+  echo Install Node.js 22 LTS and run this file again.
   pause
   exit /b 1
 )
 
-echo [2/4] Checking Shopify CLI...
 where shopify >nul 2>&1
 if errorlevel 1 (
-  echo Shopify CLI not found. Installing it now...
+  echo Installing Shopify CLI...
   call npm install -g @shopify/cli@latest
   if errorlevel 1 goto :failed
 )
 
-echo [3/4] Checking project packages...
 if not exist "node_modules" (
-  echo Installing Telence packages. This can take a minute...
+  echo Installing Telence packages...
   call npm install --no-audit --no-fund
   if errorlevel 1 goto :failed
-) else (
-  echo Packages already installed.
 )
 
 echo.
-echo [4/4] Opening the Telence development server...
+echo STEP 1 - Link this code to the Shopify app
+echo --------------------------------------------------
+echo When Shopify asks which app to use, select:
+echo   Telence Development
 echo.
-echo IMPORTANT:
-echo   A second window called "TELENCE DEV SERVER - KEEP OPEN" will open.
-echo   DO NOT close that window while using Telence inside Shopify.
-echo   If that window is closed, Shopify will show trycloudflare.com refused to connect.
-echo.
-echo In the new window Shopify may ask you to:
-echo   1. Sign in to Shopify
-echo   2. Choose your organization
-echo   3. Create or select Telence Development
-echo   4. Choose your development store
-echo.
-
-start "TELENCE DEV SERVER - KEEP OPEN" cmd /k "cd /d ""%TELENCE_DIR%"" && shopify app dev --reset"
+call shopify app config link
 if errorlevel 1 goto :failed
 
-echo Telence dev server was opened in a separate window.
-echo Wait until that window says the dev preview is ready.
-echo Then refresh Telence in Shopify Admin.
 echo.
-echo You can close THIS launcher window. Keep the DEV SERVER window open.
+echo STEP 2 - Start Telence
+echo --------------------------------------------------
+echo When Shopify asks for a store, select your test store.
+echo Keep this window OPEN after Dev preview ready appears.
 echo.
-pause
-exit /b 0
+call shopify app dev --reset
+if errorlevel 1 goto :failed
+
+goto :end
 
 :failed
 echo.
 echo ==========================================
-echo Telence could not start.
-echo Do NOT run npm audit fix --force.
-echo Take a screenshot of this window and send it to ChatGPT.
+echo TELENCE DID NOT START
 echo ==========================================
+echo.
+echo Take a screenshot of THIS window and send it to ChatGPT.
+echo Do not run npm audit fix --force.
 echo.
 pause
 exit /b 1
+
+:end
+echo.
+echo Telence dev session ended.
+pause
