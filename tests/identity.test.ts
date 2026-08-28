@@ -7,8 +7,8 @@ describe('Magnum identity primitives', () => {
     expect(normalizeEmail('  Test@Example.COM ')).toBe('test@example.com');
   });
 
-  it('builds a Meta fbc value from fbclid', () => {
-    expect(buildFbc('abc123', 1_700_000_000_000)).toBe('fb.1.1700000000.abc123');
+  it('builds a Meta fbc value from fbclid using milliseconds', () => {
+    expect(buildFbc('abc123', 1_700_000_000_000)).toBe('fb.1.1700000000000.abc123');
   });
 
   it('generates stable event ids for deduplication', () => {
@@ -21,11 +21,11 @@ describe('Magnum identity primitives', () => {
       visitor_id: 'mg_v_12345678',
       session_id: 'mg_s_12345678',
       email: 'test@example.com',
-      first_touch: { fbc: 'fb.1.1.click', fbp: 'fb.1.1.browser', captured_at: 1 },
+      first_touch: { fbc: 'fb.1.1700000000000.click', fbp: 'fb.1.1700000000000.browser', captured_at: 1 },
     });
 
-    expect(data.fbc).toBe('fb.1.1.click');
-    expect(data.fbp).toBe('fb.1.1.browser');
+    expect(data.fbc).toBe('fb.1.1700000000000.click');
+    expect(data.fbp).toBe('fb.1.1700000000000.browser');
     expect(data.em).toHaveLength(1);
     expect(data.external_id).toHaveLength(1);
   });
