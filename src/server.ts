@@ -22,14 +22,24 @@ const touchSchema = z.object({
   captured_at: z.number(),
 });
 
+const customerMatchSchema = {
+  customer_id: z.string().optional(),
+  email: z.string().optional(),
+  phone: z.string().optional(),
+  first_name: z.string().optional(),
+  last_name: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  postal_code: z.string().optional(),
+  country: z.string().length(2).optional(),
+};
+
 const identifySchema = z.object({
   visitor_id: z.string().min(8),
   session_id: z.string().min(8),
   cart_token: z.string().optional(),
   checkout_token: z.string().optional(),
-  customer_id: z.string().optional(),
-  email: z.string().optional(),
-  phone: z.string().optional(),
+  ...customerMatchSchema,
   first_touch: touchSchema.optional(),
   last_touch: touchSchema.optional(),
 });
@@ -59,10 +69,12 @@ const purchaseSchema = z.object({
   value: z.number().nonnegative(),
   currency: z.string().length(3),
   source_url: z.string().optional(),
-  customer_id: z.string().optional(),
-  email: z.string().optional(),
-  phone: z.string().optional(),
-  contents: z.array(z.object({ id: z.string(), quantity: z.number().positive(), item_price: z.number().nonnegative().optional() })).optional(),
+  ...customerMatchSchema,
+  contents: z.array(z.object({
+    id: z.string(),
+    quantity: z.number().positive(),
+    item_price: z.number().nonnegative().optional(),
+  })).optional(),
 });
 
 app.post('/v1/purchase', async (req, res) => {
@@ -78,6 +90,12 @@ app.post('/v1/purchase', async (req, res) => {
     customer_id: data.customer_id ?? current.customer_id,
     email: data.email ?? current.email,
     phone: data.phone ?? current.phone,
+    first_name: data.first_name ?? current.first_name,
+    last_name: data.last_name ?? current.last_name,
+    city: data.city ?? current.city,
+    state: data.state ?? current.state,
+    postal_code: data.postal_code ?? current.postal_code,
+    country: data.country ?? current.country,
   };
 
   identities.set(data.visitor_id, identity);
