@@ -1,0 +1,72 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.sqlite"
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+
+  @@index([shop])
+}
+
+model ShopInstallation {
+  shop           String    @id
+  publicPixelKey String?   @unique
+  webPixelId     String?
+  installedAt    DateTime  @default(now())
+  uninstalledAt  DateTime?
+  updatedAt      DateTime  @updatedAt
+}
+
+model IngestEvent {
+  id            String    @id @default(cuid())
+  shop          String
+  source        String
+  eventName     String?
+  visitorId     String?
+  sessionId     String?
+  cartToken     String?
+  checkoutToken String?
+  clientIp      String?
+  userAgent     String?
+  payload       Json
+  occurredAt    DateTime?
+  receivedAt    DateTime  @default(now())
+
+  @@index([shop, receivedAt])
+  @@index([shop, visitorId])
+  @@index([shop, cartToken])
+  @@index([shop, checkoutToken])
+}
+
+model ShopifyOrderReceipt {
+  id             String   @id @default(cuid())
+  shop           String
+  topic          String
+  shopifyOrderId String?
+  payload        Json
+  receivedAt     DateTime @default(now())
+
+  @@index([shop, shopifyOrderId])
+  @@index([shop, receivedAt])
+}
