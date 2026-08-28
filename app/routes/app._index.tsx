@@ -1,8 +1,13 @@
 import { randomBytes } from "node:crypto";
+import type { CSSProperties } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
+
+type ActionData =
+  | { ok: true; webPixelId: string; alreadyActive?: boolean }
+  | { ok: false; error: string };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -21,7 +26,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
 };
 
-export const action = async ({ request }: ActionFunctionArgs) => {
+export const action = async ({ request }: ActionFunctionArgs): Promise<ActionData> => {
   const { admin, session } = await authenticate.admin(request);
   const form = await request.formData();
   const intent = form.get("intent");
@@ -59,20 +64,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         webPixel: {
           settings: {
             endpoint: process.env.TELENCE_PIXEL_ENDPOINT || "https://d.telence.com/pixel/e",
-            publicKey,
+            publicKey: publicPixelKey,
           },
         },
       },
     },
   );
 
-  const json = await response.json();
+  const json = await response.json() as {
+    data?: {
+      webPixelCreate?: {
+        webPixel?: { id?: string } | null;
+        userErrors?: Array<{ message: string }>;
+      };
+    };
+  };
   const result = json.data?.webPixelCreate;
   if (result?.userErrors?.length) {
-    return { ok: false, error: result.userErrors.map((e: { message: string }) => e.message).join("; ") };
+    return { ok: false, error: result.userErrors.map((error) => error.message).join("; ") };
   }
 
-  const webPixelId = result?.webPixel?.id as string | undefined;
+  const webPixelId = result?.webPixel?.id;
   if (!webPixelId) return { ok: false, error: "Shopify did not return a Web Pixel ID." };
 
   await db.shopInstallation.update({
@@ -83,7 +95,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return { ok: true, webPixelId };
 };
 
-const card: React.CSSProperties = {
+const card: CSSProperties = {
   background: "#fff",
   border: "1px solid #e3e3e3",
   borderRadius: 12,
@@ -92,7 +104,7 @@ const card: React.CSSProperties = {
 
 export default function Home() {
   const data = useLoaderData<typeof loader>();
-  const action = useActionData<typeof action>();
+  const actionData = useActionData() as ActionData | undefined;
 
   return (
     <main style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 24px 60px" }}>
@@ -138,8 +150,8 @@ export default function Home() {
           </Form>
         )}
         {data.active && <div style={{ color: "#008060", fontWeight: 700 }}>Tracking extension connected.</div>}
-        {action && !action.ok && <p style={{ color: "#b42318" }}>{action.error}</p>}
-        {action && action.ok && <p style={{ color: "#008060" }}>Web Pixel ready: {action.webPixelId}</p>}
+        {actionData && !actionData.ok && <p style={{ color: "#b42318" }}>{actionData.error}</p>}
+        {actionData?.ok && <p style={{ color: "#008060" }}>Web Pixel ready: {actionData.webPixelId}</p>}
       </section>
     </main>
   );
