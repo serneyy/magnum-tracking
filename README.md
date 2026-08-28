@@ -65,6 +65,10 @@ For already-installed stores the embedded app repeats this check when it opens, 
 
 During development the pixel endpoint follows the current `SHOPIFY_APP_URL` and resolves to `/pixel/e`. In production it can be pinned with `TELENCE_PIXEL_ENDPOINT` and will ultimately use the permanent Telence collector hostname.
 
+## Stable hosting
+
+Local Shopify development URLs are temporary. Production Telence must run on a permanent HTTPS application/backend URL so the embedded Admin UI, Web Pixel ingestion, App Proxy and Shopify webhooks remain reachable even when no developer terminal is open. The target collector hostname is `https://d.telence.com`.
+
 ## Identity namespace
 
 Telence-owned browser identifiers use the `tl_*` namespace.
