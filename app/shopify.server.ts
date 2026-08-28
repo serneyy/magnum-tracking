@@ -6,6 +6,7 @@ import {
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import db from "./db.server";
+import { ensureTelenceWebPixel } from "./telence.pixel.server";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY || "",
@@ -18,6 +19,18 @@ const shopify = shopifyApp({
   distribution: AppDistribution.AppStore,
   future: {
     expiringOfflineAccessTokens: true,
+  },
+  hooks: {
+    afterAuth: async ({ session, admin }) => {
+      try {
+        const result = await ensureTelenceWebPixel(admin, session.shop);
+        console.log(
+          `[Telence] Web Pixel ${result.created ? "created" : "updated"} for ${session.shop}: ${result.webPixelId} -> ${result.endpoint}`,
+        );
+      } catch (error) {
+        console.error(`[Telence] Could not provision Web Pixel for ${session.shop}`, error);
+      }
+    },
   },
 });
 

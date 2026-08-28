@@ -8,6 +8,18 @@
 
 Telence connects browser signals, Shopify commerce identity and ad-platform identifiers into one durable identity graph, then sends the strongest legitimate conversion payload to destinations such as Meta.
 
+## Dashboard
+
+Opening Telence inside Shopify Admin shows a live tracking control center with Telence Brain status, recent events, order receipts, App Proxy versus Web Pixel ingestion, visitor/cart/checkout coverage, `fbc`/`fbp` presence and a live event stream.
+
+## Shopify app icon
+
+Telence uses this logo throughout the embedded app:
+
+`https://cdn.shopify.com/s/files/1/0685/9060/0494/files/m_2.jpg?v=1787914555`
+
+The icon that Shopify itself displays on the Apps page and in Shopify Admin navigation is managed in Shopify Dev Dashboard -> Telence -> Settings -> App icon.
+
 ## Architecture
 
 ```text
@@ -31,19 +43,31 @@ Telence Brain
 
 ## Shopify app
 
-Telence uses Shopify's React Router app stack and is being built as a real embedded Shopify app.
-
 Core pieces:
 
 - Embedded Shopify Admin app
 - Shopify App Proxy at `/apps/telence`
 - Theme app extension for first-hop storefront collection
 - Web Pixel extension for checkout/customer events
+- automatic Web Pixel provisioning after authorization
+- Web Pixel self-heal/update whenever the embedded app opens
 - Shopify-managed scopes and webhooks
-- PostgreSQL/Prisma persistence
+- PostgreSQL/Prisma production persistence
+- SQLite persistence for local development
 - per-store Telence pixel key
-- activation flow using `webPixelCreate`
 - Telence Brain identity graph and diagnostics
+
+## Automatic Web Pixel provisioning
+
+Merchants do not need to manually create a Telence Web Pixel. After Shopify authorization, Telence checks the current store-level Web Pixel and either creates it with `webPixelCreate` or updates it with `webPixelUpdate`.
+
+For already-installed stores the embedded app repeats this check when it opens, so a missing or stale Web Pixel can self-heal without reinstalling the app.
+
+During development the pixel endpoint follows the current `SHOPIFY_APP_URL` and resolves to `/pixel/e`. In production it can be pinned with `TELENCE_PIXEL_ENDPOINT` and will ultimately use the permanent Telence collector hostname.
+
+## Stable hosting
+
+Local Shopify development URLs are temporary. Production Telence must run on a permanent HTTPS application/backend URL so the embedded Admin UI, Web Pixel ingestion, App Proxy and Shopify webhooks remain reachable even when no developer terminal is open. The target collector hostname is `https://d.telence.com`.
 
 ## Identity namespace
 
@@ -80,47 +104,9 @@ Protected customer data approval will also be required before a public productio
 
 ## Advanced matching
 
-Telence is designed to preserve and resolve real customer and browser signals rather than fabricate attribution.
-
-Depending on what is legitimately available for a purchase, the final destination payload can include:
-
-```text
-email
-phone
-first name
-last name
-city
-state / province
-postal code
-country
-Shopify customer ID
-Telence visitor ID
-fbc
-fbp
-client IP
-user agent
-cart token
-checkout token
-Shopify clientId
-```
+Telence preserves and resolves real customer and browser signals rather than fabricating attribution. Depending on what is legitimately available for a purchase, the final destination payload can include email, phone, name/address fields, Shopify customer ID, Telence visitor ID, `fbc`, `fbp`, client IP, user agent, cart token, checkout token and Shopify clientId.
 
 See `docs/advanced-matching.md` for the detailed matching strategy.
-
-## Local development
-
-1. Install Node.js and Shopify CLI.
-2. Run `npm install`.
-3. Create/select the Telence Development app in Shopify Dev Dashboard.
-4. Run `shopify app config link`.
-5. Use `shopify.app.toml.example` as the configuration reference while preserving Shopify's real `client_id`.
-6. Create PostgreSQL and set `DATABASE_URL`.
-7. Run `npm run dev` and select the development store.
-8. Generate/deploy the app extensions so Shopify assigns extension UIDs.
-9. Open Telence inside Shopify Admin and activate the Telence Web Pixel.
-
-## Environment
-
-See `.env.example`. Secrets must never be committed.
 
 ## Development strategy
 
@@ -128,17 +114,6 @@ Telence should first run in **shadow mode**: collect and resolve real journeys w
 
 ## Current status
 
-The Shopify app foundation currently includes:
-
-- Shopify authentication
-- embedded admin shell
-- PostgreSQL/Prisma models
-- App Proxy ingestion
-- Web Pixel ingestion
-- Theme App Extension
-- Web Pixel Extension
-- order/refund/uninstall/privacy webhooks
-- Web Pixel activation flow
-- CI typecheck and production build
+The Shopify app foundation currently includes Shopify authentication, embedded admin dashboard, live event stream, PostgreSQL production + SQLite local-development Prisma models, App Proxy ingestion, Web Pixel ingestion, automatic Web Pixel create/update, Theme App Extension, Web Pixel Extension, order/refund/uninstall/privacy webhooks and CI typecheck/build checks.
 
 Production Meta delivery remains intentionally disabled until shadow-mode validation is complete.
