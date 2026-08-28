@@ -8,23 +8,32 @@
 
 Telence connects browser signals, Shopify commerce identity and ad-platform identifiers into one durable identity graph, then sends the strongest legitimate conversion payload to destinations such as Meta.
 
-## Fastest Windows start
+## Dashboard
 
-For local Shopify testing, Telence is intentionally zero-config.
+Opening Telence inside Shopify Admin now shows a live tracking control center:
 
-1. Clone or pull this repository.
-2. Double-click `START_TELENCE.bat`.
-3. Sign in to Shopify when the browser opens.
-4. Choose your Shopify organization.
-5. Create/select **Telence Development**.
-6. Choose a development store.
-7. Open the preview and click **Install app**.
+- Telence Brain live/standby state
+- events in the last 5 minutes and 24 hours
+- Shopify order receipts
+- App Proxy versus Web Pixel ingestion
+- recent visitor/cart/checkout identity coverage
+- recent `fbc` and `fbp` presence
+- auto-refreshing live event stream
+- Web Pixel activation status
 
-The launcher installs Shopify CLI if needed, installs npm packages if needed and starts `shopify app dev --reset` for you.
+The dashboard refreshes every four seconds while the tab is visible.
 
-Local development uses a separate SQLite database at `prisma/dev.sqlite`, so no PostgreSQL, Neon or Supabase account is required for the first test. The production architecture can continue using PostgreSQL.
+## Shopify app icon
 
-Do not run `npm audit fix --force` just to clear dependency warnings during setup.
+Telence uses this logo throughout the embedded app:
+
+`https://cdn.shopify.com/s/files/1/0685/9060/0494/files/m_2.jpg?v=1787914555`
+
+The icon that Shopify itself displays on the Apps page and in Shopify Admin navigation is managed by Shopify, not by application code. Upload the square Telence logo in:
+
+`Shopify Dev Dashboard -> Telence -> Settings -> App icon`
+
+Shopify currently requires a square PNG or JPG at 1200 x 1200 px without pre-rounded corners.
 
 ## Architecture
 
@@ -49,7 +58,7 @@ Telence Brain
 
 ## Shopify app
 
-Telence uses Shopify's React Router app stack and is built as an embedded Shopify app.
+Telence uses Shopify's React Router app stack and is being built as a real embedded Shopify app.
 
 Core pieces:
 
@@ -58,7 +67,8 @@ Core pieces:
 - Theme app extension for first-hop storefront collection
 - Web Pixel extension for checkout/customer events
 - Shopify-managed scopes and webhooks
-- Prisma persistence
+- PostgreSQL/Prisma production persistence
+- SQLite persistence for the one-click local development flow
 - per-store Telence pixel key
 - activation flow using `webPixelCreate`
 - Telence Brain identity graph and diagnostics
@@ -124,22 +134,23 @@ Shopify clientId
 
 See `docs/advanced-matching.md` for the detailed matching strategy.
 
-## Manual local development
+## Easiest Windows development flow
 
-If you do not want to use `START_TELENCE.bat`:
+For the first Shopify test, no external PostgreSQL database is required.
 
-```text
-npm install
-shopify app dev --reset
-```
+1. Open the repository folder.
+2. Double-click `START_TELENCE.bat`.
+3. Sign in to Shopify if requested.
+4. Create or select `Telence Development`.
+5. Choose a development store.
+6. Click `Install app` when Shopify opens the install screen.
+7. Keep the Telence launcher window open while testing.
 
-Shopify CLI links/creates the development app, supplies the development tunnel and lets you choose the dev store. The Telence web process automatically generates the Prisma client from `prisma/schema.dev.prisma` and creates the local SQLite database.
+The launcher installs Shopify CLI/project dependencies if necessary and starts `shopify app dev --reset` automatically. Local development uses `prisma/schema.dev.prisma` with SQLite. Production remains PostgreSQL.
 
-## Production database
+## Environment
 
-`prisma/schema.prisma` remains the production PostgreSQL schema. Local Shopify development uses `prisma/schema.dev.prisma` only to remove external database setup from the first-run experience.
-
-Secrets must never be committed.
+See `.env.example`. Secrets must never be committed.
 
 ## Development strategy
 
@@ -150,9 +161,9 @@ Telence should first run in **shadow mode**: collect and resolve real journeys w
 The Shopify app foundation currently includes:
 
 - Shopify authentication
-- embedded admin shell
-- PostgreSQL production models
-- zero-config SQLite local development
+- embedded admin dashboard
+- live tracking event stream
+- PostgreSQL production + SQLite local-development Prisma models
 - App Proxy ingestion
 - Web Pixel ingestion
 - Theme App Extension
