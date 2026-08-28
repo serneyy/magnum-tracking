@@ -1,0 +1,38 @@
+# Run `shopify app config link` first. Shopify will create the real
+# shopify.app.toml with the app's client_id. Copy the Telence settings below
+# into that linked configuration.
+
+name = "Telence"
+client_id = "REPLACED_BY_SHOPIFY_CLI"
+application_url = "https://d.telence.com"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+include_config_on_deploy = true
+
+[access_scopes]
+scopes = "read_orders,read_customers,write_app_proxy,write_pixels,read_customer_events"
+
+[auth]
+redirect_urls = ["https://d.telence.com/auth/callback"]
+
+[webhooks]
+api_version = "2026-07"
+
+[[webhooks.subscriptions]]
+topics = ["app/uninstalled"]
+uri = "/webhooks/app/uninstalled"
+
+[[webhooks.subscriptions]]
+topics = ["orders/create", "orders/updated", "refunds/create"]
+uri = "/webhooks/orders"
+
+[[webhooks.subscriptions]]
+compliance_topics = ["customers/data_request", "customers/redact", "shop/redact"]
+uri = "/webhooks/compliance"
+
+[app_proxy]
+url = "/proxy"
+prefix = "apps"
+subpath = "telence"

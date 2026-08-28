@@ -1,0 +1,10 @@
+node_modules/
+build/
+.env
+.env.*
+!.env.example
+.prisma/
+*.sqlite
+*.sqlite-journal
+.shopify/
+.DS_Store
