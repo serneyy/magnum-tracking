@@ -42,10 +42,10 @@ echo [4/4] Starting Telence in Shopify...
 echo.
 echo Shopify may open your browser and ask you to:
 echo   1. Sign in to Shopify
-  echo   2. Choose your organization
-  echo   3. Create or select the Telence Development app
-  echo   4. Choose your development store
-  echo.
+echo   2. Choose your organization
+echo   3. Create or select the Telence Development app
+echo   4. Choose your development store
+echo.
 echo After that, keep this window OPEN while testing Telence.
 echo.
 
