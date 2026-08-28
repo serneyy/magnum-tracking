@@ -1,0 +1,7 @@
+{
+  "name": "telence-web-pixel",
+  "private": true,
+  "dependencies": {
+    "@shopify/web-pixels-extension": "latest"
+  }
+}
