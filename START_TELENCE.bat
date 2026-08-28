@@ -1,14 +1,15 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title TELENCE DEV SERVER - KEEP OPEN
+title TELENCE - KEEP OPEN
 
 echo.
 echo ==========================================
-echo   TELENCE - Shopify Development
+echo   TELENCE - Shopify Admin Preview
 echo ==========================================
 echo.
-echo Keep THIS window open while using Telence.
+echo This mode does NOT use Cloudflare.
+echo Keep this window open while viewing Telence in Shopify.
 echo.
 
 where node >nul 2>&1
@@ -33,21 +34,20 @@ if not exist "node_modules" (
 )
 
 echo.
-echo STEP 1 - Link this code to the Shopify app
+echo STEP 1 - Link Telence to your Shopify app
 echo --------------------------------------------------
-echo When Shopify asks which app to use, select:
-echo   Telence Development
+echo Select Telence Development when Shopify asks.
 echo.
 call shopify app config link
 if errorlevel 1 goto :failed
 
 echo.
-echo STEP 2 - Start Telence
+echo STEP 2 - Start Telence on localhost
 echo --------------------------------------------------
-echo When Shopify asks for a store, select your test store.
-echo Keep this window OPEN after Dev preview ready appears.
+echo This bypasses the unstable trycloudflare tunnel.
+echo Select your development store if Shopify asks.
 echo.
-call shopify app dev --reset
+call shopify app dev --reset --use-localhost --install-mkcert
 if errorlevel 1 goto :failed
 
 goto :end
