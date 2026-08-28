@@ -1,0 +1,832 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Magnum — Tracking Intelligence</title>
+  <style>
+    :root {
+      --bg: #090a0b;
+      --bg-2: #0d0f11;
+      --panel: rgba(19, 21, 24, .84);
+      --panel-2: rgba(25, 28, 31, .9);
+      --line: rgba(255,255,255,.08);
+      --line-strong: rgba(255,255,255,.13);
+      --text: #f6f7f8;
+      --muted: #8f979f;
+      --muted-2: #687078;
+      --lime: #b8ff4d;
+      --lime-soft: rgba(184,255,77,.12);
+      --cyan: #58e1ff;
+      --cyan-soft: rgba(88,225,255,.12);
+      --violet: #9b8cff;
+      --violet-soft: rgba(155,140,255,.12);
+      --amber: #ffbe55;
+      --amber-soft: rgba(255,190,85,.12);
+      --red: #ff6b6b;
+      --green: #70e59c;
+      --shadow: 0 24px 80px rgba(0,0,0,.38);
+      --radius: 18px;
+      --radius-sm: 12px;
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--bg); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 70% -20%, rgba(184,255,77,.08), transparent 34%),
+        radial-gradient(circle at 110% 40%, rgba(88,225,255,.05), transparent 28%),
+        linear-gradient(180deg, #090a0b 0%, #0b0c0e 100%);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: -.01em;
+    }
+
+    button, input { font: inherit; }
+    button { color: inherit; }
+
+    .app {
+      display: grid;
+      grid-template-columns: 244px minmax(0,1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 20px 16px;
+      border-right: 1px solid var(--line);
+      background: rgba(8,9,10,.78);
+      backdrop-filter: blur(18px);
+      z-index: 30;
+    }
+
+    .brand {
+      display:flex;
+      align-items:center;
+      gap:11px;
+      padding: 2px 8px 22px;
+    }
+
+    .brand-mark {
+      position:relative;
+      width:34px;
+      height:34px;
+      border-radius:10px;
+      background: #f5f6f6;
+      color:#090a0b;
+      display:grid;
+      place-items:center;
+      font-weight:900;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,.1), 0 8px 30px rgba(255,255,255,.08);
+      overflow:hidden;
+    }
+    .brand-mark::after {
+      content:"";
+      position:absolute;
+      inset:auto -7px -12px auto;
+      width:28px;
+      height:28px;
+      border-radius:50%;
+      background:var(--lime);
+      opacity:.9;
+    }
+    .brand-mark span { position:relative; z-index:2; }
+    .brand-name { font-weight:800; font-size:17px; letter-spacing:-.04em; }
+    .brand-sub { color:var(--muted-2); font-size:11px; margin-top:2px; }
+
+    .workspace {
+      margin:0 6px 18px;
+      border:1px solid var(--line);
+      background:rgba(255,255,255,.025);
+      border-radius:13px;
+      padding:10px;
+    }
+    .workspace-row { display:flex; align-items:center; gap:9px; }
+    .store-avatar {
+      width:30px;height:30px;border-radius:8px;
+      background:linear-gradient(145deg,#eff1f2,#bfc5ca);
+      color:#090a0b;display:grid;place-items:center;font-weight:900;font-size:12px;
+    }
+    .workspace strong { font-size:12px; display:block; }
+    .workspace small { color:var(--muted); font-size:10px; }
+    .workspace .chev { margin-left:auto;color:var(--muted); }
+
+    .nav-label {
+      color:#565d64;
+      font-size:10px;
+      font-weight:800;
+      text-transform:uppercase;
+      letter-spacing:.12em;
+      padding: 5px 11px 7px;
+    }
+    .nav { display:grid; gap:4px; }
+    .nav button {
+      border:0;
+      width:100%;
+      background:transparent;
+      padding:10px 11px;
+      display:flex;
+      align-items:center;
+      gap:10px;
+      border-radius:10px;
+      color:#9199a1;
+      text-align:left;
+      cursor:pointer;
+      transition:.16s ease;
+    }
+    .nav button:hover { background:rgba(255,255,255,.04); color:#dce0e3; }
+    .nav button.active {
+      color:#fff;
+      background:rgba(255,255,255,.065);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.04);
+    }
+    .nav svg { width:17px;height:17px;stroke:currentColor;stroke-width:1.7;fill:none; }
+    .nav span { font-size:12px;font-weight:650; }
+    .nav .badge {
+      margin-left:auto;
+      min-width:22px;
+      height:20px;
+      padding:0 6px;
+      border-radius:999px;
+      display:grid;place-items:center;
+      color:#dfe5e9;background:rgba(255,255,255,.06);
+      font-size:10px;
+    }
+    .nav .brain-dot { margin-left:auto;width:6px;height:6px;border-radius:50%;background:var(--lime);box-shadow:0 0 14px var(--lime); }
+
+    .sidebar-bottom {
+      position:absolute;
+      bottom:16px;left:16px;right:16px;
+    }
+    .mini-health {
+      border:1px solid var(--line);
+      border-radius:13px;
+      padding:11px;
+      background:rgba(255,255,255,.025);
+    }
+    .mini-health .top { display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:700; }
+    .status-dot { width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 14px rgba(112,229,156,.7);display:inline-block;margin-right:6px; }
+    .health-bar { height:5px;background:#202428;border-radius:999px;margin-top:10px;overflow:hidden; }
+    .health-bar span { display:block;width:98.6%;height:100%;background:linear-gradient(90deg,var(--green),var(--lime));border-radius:inherit; }
+    .mini-health small { color:var(--muted);font-size:10px;display:block;margin-top:7px; }
+
+    main { min-width:0; }
+    .topbar {
+      position:sticky;top:0;z-index:20;
+      height:66px;
+      display:flex;align-items:center;
+      padding:0 26px;
+      border-bottom:1px solid var(--line);
+      background:rgba(9,10,11,.74);
+      backdrop-filter:blur(20px);
+    }
+    .page-title { font-size:14px;font-weight:760; }
+    .topbar-right { margin-left:auto; display:flex;align-items:center;gap:10px; }
+    .live-chip {
+      display:flex;align-items:center;gap:7px;
+      border:1px solid rgba(112,229,156,.16);
+      background:rgba(112,229,156,.06);
+      color:#b9f2ce;
+      border-radius:999px;
+      font-size:10px;font-weight:750;
+      padding:7px 10px;
+    }
+    .live-chip i { width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 11px var(--green); }
+    .icon-btn {
+      width:34px;height:34px;border-radius:10px;
+      border:1px solid var(--line);background:rgba(255,255,255,.025);
+      display:grid;place-items:center;cursor:pointer;color:#aab1b7;
+    }
+    .icon-btn:hover { color:#fff;background:rgba(255,255,255,.05); }
+    .icon-btn svg { width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7; }
+    .avatar { width:34px;height:34px;border-radius:10px;background:#e3e6e8;color:#101112;display:grid;place-items:center;font-size:11px;font-weight:850; }
+
+    .content { max-width:1600px;margin:0 auto;padding:26px; }
+    .demo-banner {
+      display:flex;align-items:center;gap:9px;
+      color:#b7bec4;font-size:11px;
+      margin-bottom:18px;
+    }
+    .demo-banner b { color:#fff; }
+    .demo-pill { color:#0b0d0e;background:var(--amber);font-weight:900;border-radius:999px;padding:4px 7px;font-size:9px;letter-spacing:.06em; }
+
+    .hero-row { display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:16px;margin-bottom:16px; }
+    .headline {
+      min-height:155px;
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      background:linear-gradient(150deg,rgba(255,255,255,.045),rgba(255,255,255,.012));
+      padding:22px;
+      position:relative;
+      overflow:hidden;
+      box-shadow:var(--shadow);
+    }
+    .headline::after {
+      content:"";position:absolute;width:220px;height:220px;border-radius:50%;
+      right:-65px;top:-105px;background:radial-gradient(circle,rgba(184,255,77,.14),transparent 65%);
+      pointer-events:none;
+    }
+    .eyebrow { color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.11em;text-transform:uppercase; }
+    h1 { margin:8px 0 7px;font-size:31px;line-height:1.05;letter-spacing:-.055em;max-width:700px; }
+    .headline p { margin:0;color:#8e969e;font-size:12px;max-width:660px;line-height:1.55; }
+    .hero-actions { display:flex;gap:8px;margin-top:18px; }
+    .btn {
+      border:1px solid var(--line);background:rgba(255,255,255,.04);
+      border-radius:10px;padding:8px 11px;font-size:10px;font-weight:750;cursor:pointer;
+    }
+    .btn:hover { background:rgba(255,255,255,.075); }
+    .btn.primary { background:var(--text);color:#0a0b0c;border-color:var(--text); }
+    .btn.primary:hover { background:#fff; }
+
+    .signal-card {
+      border:1px solid rgba(184,255,77,.14);
+      background:linear-gradient(145deg,rgba(184,255,77,.075),rgba(255,255,255,.02));
+      border-radius:var(--radius);
+      padding:18px;
+      position:relative;
+      overflow:hidden;
+    }
+    .signal-head { display:flex;align-items:flex-start;justify-content:space-between; }
+    .signal-head span { color:#b8ff4d;font-size:10px;font-weight:850;text-transform:uppercase;letter-spacing:.1em; }
+    .signal-score { font-size:39px;line-height:1;font-weight:850;letter-spacing:-.06em;margin-top:17px; }
+    .signal-score small { font-size:14px;color:#7f878e;font-weight:600;letter-spacing:0; }
+    .signal-card p { color:#818a91;font-size:10px;line-height:1.5;margin:8px 0 0; }
+    .spark { display:flex;align-items:flex-end;height:35px;gap:3px;margin-top:13px;opacity:.9; }
+    .spark i { flex:1;border-radius:4px 4px 1px 1px;background:linear-gradient(180deg,var(--lime),rgba(184,255,77,.18)); }
+
+    .metrics { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px; }
+    .metric {
+      border:1px solid var(--line);
+      border-radius:15px;
+      background:rgba(255,255,255,.025);
+      padding:15px;
+      min-height:104px;
+    }
+    .metric-top { display:flex;align-items:center;justify-content:space-between;gap:10px; }
+    .metric-name { color:#7f878e;font-size:10px;font-weight:700; }
+    .metric-icon { width:25px;height:25px;border-radius:8px;background:rgba(255,255,255,.04);display:grid;place-items:center;color:#8b9399; }
+    .metric-icon svg { width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:1.8; }
+    .metric-value { font-size:23px;font-weight:830;letter-spacing:-.045em;margin-top:12px; }
+    .metric-foot { margin-top:6px;color:#6e767d;font-size:9px; }
+    .up { color:var(--green); }
+    .warn { color:var(--amber); }
+
+    .grid-main { display:grid;grid-template-columns:minmax(0,1.25fr) minmax(340px,.75fr);gap:16px;margin-bottom:16px; }
+    .panel {
+      border:1px solid var(--line);
+      background:rgba(255,255,255,.023);
+      border-radius:var(--radius);
+      overflow:hidden;
+    }
+    .panel-head {
+      min-height:54px;
+      display:flex;align-items:center;
+      padding:0 16px;
+      border-bottom:1px solid var(--line);
+      gap:10px;
+    }
+    .panel-title { font-size:11px;font-weight:800; }
+    .panel-sub { color:#676f76;font-size:9px;margin-top:2px; }
+    .panel-head .right { margin-left:auto;display:flex;align-items:center;gap:7px; }
+    .tiny-btn { padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,.02);font-size:9px;color:#8f979d;cursor:pointer; }
+    .tiny-btn:hover, .tiny-btn.active { color:#fff;background:rgba(255,255,255,.06); }
+
+    .event-feed { height:390px;overflow:auto; }
+    .event-row {
+      display:grid;
+      grid-template-columns:8px 118px minmax(110px,1fr) minmax(115px,.8fr) 72px 62px;
+      align-items:center;
+      gap:9px;
+      padding:10px 15px;
+      border-bottom:1px solid rgba(255,255,255,.045);
+      font-size:10px;
+      transition:.16s ease;
+    }
+    .event-row:hover { background:rgba(255,255,255,.026); }
+    .event-row.new { animation:flash .85s ease; }
+    @keyframes flash { 0%{background:rgba(184,255,77,.12)}100%{background:transparent} }
+    .event-dot { width:6px;height:6px;border-radius:50%;background:#7a8187; }
+    .event-dot.purchase { background:var(--lime);box-shadow:0 0 10px rgba(184,255,77,.6); }
+    .event-dot.cart { background:var(--cyan); }
+    .event-dot.checkout { background:var(--violet); }
+    .event-name { font-weight:780;color:#dbe0e3; }
+    .event-id, .event-detail, .event-time { color:#697178;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+    .event-time { text-align:right;font-variant-numeric:tabular-nums; }
+    .route-chip { justify-self:start;border-radius:999px;padding:4px 6px;font-size:8px;font-weight:800;background:rgba(255,255,255,.04);color:#91989e;border:1px solid rgba(255,255,255,.055); }
+    .route-chip.proxy { background:rgba(88,225,255,.06);color:#8beaff;border-color:rgba(88,225,255,.12); }
+    .route-chip.server { background:rgba(184,255,77,.06);color:#c7ff7c;border-color:rgba(184,255,77,.12); }
+    .route-chip.pixel { background:rgba(155,140,255,.07);color:#b9afff;border-color:rgba(155,140,255,.12); }
+
+    .brain-card {
+      min-height:445px;
+      position:relative;
+      background:
+        radial-gradient(circle at 50% 36%,rgba(184,255,77,.07),transparent 38%),
+        linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.012));
+      cursor:pointer;
+    }
+    .brain-card:hover .brain-core { transform:scale(1.025); }
+    .brain-wrap { display:grid;place-items:center;padding:22px 20px 8px; }
+    .brain-core { width:220px;height:190px;position:relative;transition:.25s ease; }
+    .brain-svg { width:100%;height:100%;overflow:visible; }
+    .brain-svg path { fill:none;stroke:rgba(184,255,77,.18);stroke-width:1.2; }
+    .brain-svg .pulse-line { stroke:rgba(184,255,77,.42);stroke-dasharray:4 7;animation:dash 4s linear infinite; }
+    @keyframes dash { to { stroke-dashoffset:-44; } }
+    .brain-svg circle { fill:#15181a;stroke:rgba(184,255,77,.56);stroke-width:1.2; }
+    .brain-svg circle.hot { fill:var(--lime);stroke:var(--lime);filter:drop-shadow(0 0 7px rgba(184,255,77,.7)); }
+    .brain-label {
+      position:absolute;left:50%;top:50%;transform:translate(-50%,-46%);
+      width:95px;height:95px;border-radius:50%;
+      display:grid;place-items:center;text-align:center;
+      border:1px solid rgba(184,255,77,.16);
+      background:rgba(10,12,12,.82);
+      box-shadow:0 0 40px rgba(184,255,77,.05), inset 0 0 25px rgba(184,255,77,.025);
+      font-size:10px;font-weight:850;line-height:1.25;
+    }
+    .brain-label span { color:var(--lime);display:block;font-size:8px;margin-top:4px;letter-spacing:.08em;text-transform:uppercase; }
+    .brain-stats { display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:0 14px 14px; }
+    .brain-stat { border:1px solid var(--line);border-radius:11px;background:rgba(255,255,255,.018);padding:10px; }
+    .brain-stat strong { display:block;font-size:14px;letter-spacing:-.03em; }
+    .brain-stat small { display:block;color:#6f777d;font-size:9px;margin-top:4px; }
+    .brain-cta { display:flex;align-items:center;justify-content:center;gap:6px;color:#aab0b5;font-size:9px;padding:10px;border-top:1px solid var(--line); }
+
+    .integrations { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px; }
+    .integration {
+      border:1px solid var(--line);background:rgba(255,255,255,.022);border-radius:15px;padding:14px;
+    }
+    .integration-top { display:flex;align-items:center;gap:9px; }
+    .platform-logo { width:30px;height:30px;border-radius:9px;background:#171a1c;display:grid;place-items:center;font-weight:900;font-size:11px;border:1px solid var(--line); }
+    .platform-logo.meta { color:#84a7ff; }
+    .platform-logo.tiktok { color:#f4f4f4; }
+    .platform-logo.google { color:#f9c861; }
+    .platform-logo.snap { color:#fff176; }
+    .integration strong { font-size:11px; }
+    .integration small { color:#697178;font-size:9px;display:block;margin-top:2px; }
+    .connect-state { margin-left:auto;width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 12px rgba(112,229,156,.5); }
+    .connect-state.off { background:#3f454a;box-shadow:none; }
+    .integration-foot { display:flex;align-items:center;justify-content:space-between;margin-top:13px;padding-top:11px;border-top:1px solid var(--line);color:#747c82;font-size:9px; }
+    .integration-foot b { color:#bac0c4;font-weight:800; }
+
+    .orders-panel .order-row {
+      display:grid;grid-template-columns:90px minmax(120px,1fr) 90px 80px 100px 70px;
+      gap:10px;align-items:center;
+      padding:11px 15px;border-bottom:1px solid rgba(255,255,255,.045);font-size:10px;cursor:pointer;
+    }
+    .orders-panel .order-row:hover { background:rgba(255,255,255,.027); }
+    .order-num { font-weight:800;color:#dce1e4; }
+    .customer { color:#969ea4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+    .money { font-variant-numeric:tabular-nums;font-weight:700; }
+    .score { display:flex;align-items:center;gap:6px; }
+    .score-bar { width:42px;height:5px;background:#24282b;border-radius:999px;overflow:hidden; }
+    .score-bar span { display:block;height:100%;background:var(--lime);border-radius:inherit; }
+    .score.medium .score-bar span { background:var(--amber); }
+    .matched { justify-self:start;border-radius:999px;padding:4px 7px;font-size:8px;font-weight:800;background:rgba(112,229,156,.07);border:1px solid rgba(112,229,156,.12);color:#9ceabb; }
+    .matched.partial { background:rgba(255,190,85,.07);border-color:rgba(255,190,85,.13);color:#ffd28c; }
+    .source { color:#717980; }
+
+    .drawer-backdrop {
+      position:fixed;inset:0;background:rgba(0,0,0,.58);backdrop-filter:blur(7px);
+      opacity:0;pointer-events:none;transition:.2s ease;z-index:70;
+    }
+    .drawer-backdrop.open { opacity:1;pointer-events:auto; }
+    .drawer {
+      position:fixed;top:14px;right:14px;bottom:14px;width:min(760px,calc(100vw - 28px));
+      background:#0d0f10;border:1px solid var(--line-strong);border-radius:20px;
+      box-shadow:0 35px 120px rgba(0,0,0,.62);
+      transform:translateX(calc(100% + 28px));transition:.26s cubic-bezier(.2,.8,.2,1);z-index:80;
+      overflow:hidden;display:flex;flex-direction:column;
+    }
+    .drawer.open { transform:translateX(0); }
+    .drawer-head { height:66px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 18px;gap:10px; }
+    .drawer-title { font-size:13px;font-weight:830; }
+    .drawer-head .brain-status { color:var(--lime);font-size:9px;font-weight:800;margin-left:5px; }
+    .drawer-head .close { margin-left:auto; }
+    .drawer-body { overflow:auto;padding:18px; }
+    .brain-hero { border:1px solid rgba(184,255,77,.13);background:linear-gradient(135deg,rgba(184,255,77,.065),rgba(255,255,255,.015));border-radius:16px;padding:18px; }
+    .brain-hero-top { display:flex;align-items:flex-start;gap:16px; }
+    .mini-brain { width:58px;height:58px;border-radius:18px;border:1px solid rgba(184,255,77,.19);display:grid;place-items:center;background:rgba(184,255,77,.05);color:var(--lime);font-size:23px; }
+    .brain-hero h2 { margin:0;font-size:19px;letter-spacing:-.04em; }
+    .brain-hero p { margin:5px 0 0;color:#7e868d;font-size:10px;line-height:1.5;max-width:520px; }
+    .brain-kpis { display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:16px; }
+    .brain-kpi { background:rgba(0,0,0,.16);border:1px solid var(--line);border-radius:11px;padding:10px; }
+    .brain-kpi strong { display:block;font-size:14px; }
+    .brain-kpi span { color:#737b81;font-size:8px; }
+
+    .section-title { display:flex;align-items:center;justify-content:space-between;margin:20px 1px 9px; }
+    .section-title strong { font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#8d9499; }
+    .section-title span { color:#596168;font-size:9px; }
+    .graph {
+      border:1px solid var(--line);border-radius:15px;background:#0b0d0e;height:270px;position:relative;overflow:hidden;
+      background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
+      background-size:26px 26px;
+    }
+    .graph svg { position:absolute;inset:0;width:100%;height:100%; }
+    .graph line { stroke:rgba(184,255,77,.14);stroke-width:1.2; }
+    .node {
+      position:absolute;min-width:92px;max-width:140px;padding:9px 10px;border-radius:10px;
+      background:#131618;border:1px solid var(--line-strong);box-shadow:0 8px 22px rgba(0,0,0,.24);
+    }
+    .node b { display:block;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+    .node small { color:#697178;font-size:7px;display:block;margin-top:3px; }
+    .node.hot { border-color:rgba(184,255,77,.25);box-shadow:0 0 30px rgba(184,255,77,.05); }
+    .node.hot b { color:#d5ff9a; }
+    .node.n1{left:4%;top:13%}.node.n2{left:34%;top:7%}.node.n3{right:5%;top:17%}.node.n4{left:16%;bottom:14%}.node.n5{left:44%;bottom:10%}.node.n6{right:4%;bottom:15%}
+
+    .data-table { border:1px solid var(--line);border-radius:14px;overflow:hidden; }
+    .data-row { display:grid;grid-template-columns:1.1fr 1fr 80px 80px;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.045);font-size:9px;align-items:center; }
+    .data-row:last-child { border-bottom:0; }
+    .data-row.header { color:#555d63;text-transform:uppercase;letter-spacing:.08em;font-size:7px;font-weight:800;background:rgba(255,255,255,.015); }
+    .data-row b { color:#c7ccd0;font-size:9px; }
+    .data-row span { color:#727a80; }
+    .type-chip { justify-self:start;padding:3px 5px;border-radius:6px;border:1px solid var(--line);color:#81898f!important;font-size:7px; }
+
+    .order-drawer .match-grid { display:grid;grid-template-columns:repeat(2,1fr);gap:8px; }
+    .signal-item { display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:10px;padding:9px;background:rgba(255,255,255,.017); }
+    .signal-item i { width:7px;height:7px;border-radius:50%;background:var(--green); }
+    .signal-item.missing i { background:#41464a; }
+    .signal-item div { min-width:0; }
+    .signal-item b { display:block;font-size:9px; }
+    .signal-item small { display:block;color:#626a70;font-size:7px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+
+    .toast {
+      position:fixed;left:50%;bottom:22px;transform:translate(-50%,18px);
+      background:#ecefee;color:#0d0f10;border-radius:10px;padding:9px 12px;font-size:10px;font-weight:750;
+      opacity:0;pointer-events:none;transition:.2s ease;z-index:100;box-shadow:0 15px 45px rgba(0,0,0,.4);
+    }
+    .toast.show { opacity:1;transform:translate(-50%,0); }
+
+    @media (max-width: 1180px) {
+      .hero-row { grid-template-columns:1fr; }
+      .signal-card { min-height:130px; }
+      .metrics { grid-template-columns:repeat(2,1fr); }
+      .grid-main { grid-template-columns:1fr; }
+      .integrations { grid-template-columns:repeat(2,1fr); }
+    }
+    @media (max-width: 800px) {
+      .app { grid-template-columns:1fr; }
+      .sidebar { display:none; }
+      .topbar { padding:0 15px; }
+      .content { padding:16px; }
+      .metrics, .integrations { grid-template-columns:1fr 1fr; }
+      .event-row { grid-template-columns:8px 110px 1fr 62px; }
+      .event-detail,.route-chip { display:none; }
+      .orders-panel .order-row { grid-template-columns:70px 1fr 70px 70px; }
+      .orders-panel .order-row .source,.orders-panel .order-row .matched { display:none; }
+      .brain-kpis { grid-template-columns:repeat(2,1fr); }
+    }
+    @media (max-width: 520px) {
+      .metrics, .integrations { grid-template-columns:1fr; }
+      h1 { font-size:26px; }
+      .brain-kpis { grid-template-columns:1fr 1fr; }
+      .data-row { grid-template-columns:1fr 80px; }
+      .data-row > *:nth-child(2),.data-row > *:nth-child(4) { display:none; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark"><span>M</span></div>
+      <div><div class="brand-name">Magnum</div><div class="brand-sub">Tracking Intelligence</div></div>
+    </div>
+
+    <div class="workspace">
+      <div class="workspace-row">
+        <div class="store-avatar">TW</div>
+        <div><strong>Teenwear</strong><small>teenwear.eu</small></div>
+        <span class="chev">⌄</span>
+      </div>
+    </div>
+
+    <div class="nav-label">Workspace</div>
+    <nav class="nav">
+      <button class="active" data-nav="Overview">
+        <svg viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z"/></svg><span>Overview</span>
+      </button>
+      <button data-nav="Live events">
+        <svg viewBox="0 0 24 24"><path d="M4 12h3l2-6 4 12 2-6h5"/></svg><span>Live events</span><b class="badge" id="liveBadge">24</b>
+      </button>
+      <button id="brainNav">
+        <svg viewBox="0 0 24 24"><path d="M9 4a3 3 0 0 0-3 3v1a3 3 0 0 0-2 3c0 1 .5 2 1.3 2.6A3.5 3.5 0 0 0 9 19h1V5a2 2 0 0 0-1-1Zm6 0a3 3 0 0 1 3 3v1a3 3 0 0 1 2 3c0 1-.5 2-1.3 2.6A3.5 3.5 0 0 1 15 19h-1V5a2 2 0 0 1 1-1Z"/></svg><span>Magnum Brain</span><i class="brain-dot"></i>
+      </button>
+      <button data-nav="Orders">
+        <svg viewBox="0 0 24 24"><path d="M5 7h14l-1 13H6L5 7Zm3 0a4 4 0 0 1 8 0"/></svg><span>Orders</span>
+      </button>
+      <button data-nav="Customers">
+        <svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9.5 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm8.5 2a3 3 0 0 1 3 3v2M17 3.2a4 4 0 0 1 0 7.6"/></svg><span>Customers</span>
+      </button>
+      <button data-nav="Attribution">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M20 4 15 9"/></svg><span>Attribution</span>
+      </button>
+    </nav>
+
+    <div class="nav-label" style="margin-top:18px">System</div>
+    <nav class="nav">
+      <button data-nav="Integrations">
+        <svg viewBox="0 0 24 24"><path d="M8 12h8M12 8v8M5 5h14v14H5z"/></svg><span>Integrations</span><b class="badge">4</b>
+      </button>
+      <button data-nav="Diagnostics">
+        <svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M6 6l2 2M16 16l2 2M18 6l-2 2M8 16l-2 2"/><circle cx="12" cy="12" r="4"/></svg><span>Diagnostics</span>
+      </button>
+      <button data-nav="Settings">
+        <svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="m19 13 2 1-2 4-2-1a8 8 0 0 1-2 1l-.5 2h-5L9 18a8 8 0 0 1-2-1l-2 1-2-4 2-1a8 8 0 0 1 0-2L3 10l2-4 2 1a8 8 0 0 1 2-1l.5-2h5L15 6a8 8 0 0 1 2 1l2-1 2 4-2 1a8 8 0 0 1 0 2Z"/></svg><span>Settings</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-bottom">
+      <div class="mini-health">
+        <div class="top"><span><i class="status-dot"></i>System healthy</span><b>98.6%</b></div>
+        <div class="health-bar"><span></span></div>
+        <small>All collectors receiving events</small>
+      </div>
+    </div>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div class="page-title" id="pageTitle">Overview</div>
+      <div class="topbar-right">
+        <div class="live-chip"><i></i><span>LIVE</span> <span id="eventsPerMin">186 events/min</span></div>
+        <button class="icon-btn" aria-label="Search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg></button>
+        <button class="icon-btn" aria-label="Notifications"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4"/></svg></button>
+        <div class="avatar">DS</div>
+      </div>
+    </header>
+
+    <div class="content">
+      <div class="demo-banner"><span class="demo-pill">DEMO DATA</span><span>Dashboard V1 uses simulated data. Architecture is designed to connect directly to Magnum's event store later.</span></div>
+
+      <section class="hero-row">
+        <div class="headline">
+          <div class="eyebrow">Tracking control center</div>
+          <h1>Every signal. One brain.</h1>
+          <p>See what Magnum knows, what each ad platform received, and exactly why a customer or order matched — in real time.</p>
+          <div class="hero-actions">
+            <button class="btn primary" id="openBrainHero">Open Magnum Brain</button>
+            <button class="btn" id="inspectLatest">Inspect latest purchase</button>
+          </div>
+        </div>
+        <div class="signal-card">
+          <div class="signal-head"><span>Signal health</span><span style="color:#728078">last 24h</span></div>
+          <div class="signal-score">98.6<small>%</small></div>
+          <p>12.4M signals ingested. No delivery backlog. Advanced matching completeness is above target.</p>
+          <div class="spark" aria-hidden="true">
+            <i style="height:42%"></i><i style="height:58%"></i><i style="height:51%"></i><i style="height:64%"></i><i style="height:61%"></i><i style="height:74%"></i><i style="height:69%"></i><i style="height:83%"></i><i style="height:78%"></i><i style="height:91%"></i><i style="height:88%"></i><i style="height:95%"></i>
+          </div>
+        </div>
+      </section>
+
+      <section class="metrics">
+        <div class="metric"><div class="metric-top"><span class="metric-name">Events received</span><span class="metric-icon"><svg viewBox="0 0 24 24"><path d="M4 12h3l2-6 4 12 2-6h5"/></svg></span></div><div class="metric-value" id="eventCount">128,439</div><div class="metric-foot"><span class="up">+8.4%</span> vs previous 24h</div></div>
+        <div class="metric"><div class="metric-top"><span class="metric-name">Purchase match rate</span><span class="metric-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg></span></div><div class="metric-value">91.7%</div><div class="metric-foot"><span class="up">+5.9 pp</span> deterministic identity</div></div>
+        <div class="metric"><div class="metric-top"><span class="metric-name">Avg. Meta match score</span><span class="metric-icon"><svg viewBox="0 0 24 24"><path d="M4 19V5m0 14h16M8 15l3-4 3 2 4-6"/></svg></span></div><div class="metric-value">8.9 / 10</div><div class="metric-foot">Advanced matching <span class="up">strong</span></div></div>
+        <div class="metric"><div class="metric-top"><span class="metric-name">Delivery queue</span><span class="metric-icon"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h8"/></svg></span></div><div class="metric-value">0</div><div class="metric-foot">p95 delivery <span class="up">1.2s</span></div></div>
+      </section>
+
+      <section class="grid-main">
+        <div class="panel">
+          <div class="panel-head">
+            <div><div class="panel-title">Live event stream</div><div class="panel-sub">Browser, Shopify Proxy, Web Pixel and server events</div></div>
+            <div class="right"><button class="tiny-btn active">All</button><button class="tiny-btn">Purchases</button><button class="tiny-btn">Errors</button></div>
+          </div>
+          <div class="event-feed" id="eventFeed"></div>
+        </div>
+
+        <div class="panel brain-card" id="brainCard">
+          <div class="panel-head"><div><div class="panel-title">Magnum Brain</div><div class="panel-sub">Identity graph + signal database</div></div><div class="right"><span class="live-chip" style="padding:5px 8px"><i></i>LEARNING</span></div></div>
+          <div class="brain-wrap">
+            <div class="brain-core">
+              <svg class="brain-svg" viewBox="0 0 220 190" aria-hidden="true">
+                <path d="M110 24 75 43 47 81 61 127 96 157 138 151 170 121 175 77 148 42Z"/>
+                <path class="pulse-line" d="M48 81 92 78 111 24M61 127 95 102 138 151M92 78 146 72 170 121M95 102 146 72M75 43 95 102 148 42"/>
+                <circle cx="110" cy="24" r="4" class="hot"/><circle cx="75" cy="43" r="4"/><circle cx="47" cy="81" r="4"/><circle cx="61" cy="127" r="4"/><circle cx="96" cy="157" r="4"/><circle cx="138" cy="151" r="4"/><circle cx="170" cy="121" r="4"/><circle cx="175" cy="77" r="4"/><circle cx="148" cy="42" r="4"/><circle cx="92" cy="78" r="4" class="hot"/><circle cx="95" cy="102" r="4"/><circle cx="146" cy="72" r="4" class="hot"/>
+              </svg>
+              <div class="brain-label">MAGNUM<br>BRAIN<span>12.4M signals</span></div>
+            </div>
+          </div>
+          <div class="brain-stats">
+            <div class="brain-stat"><strong>128.4K</strong><small>Known visitors</small></div>
+            <div class="brain-stat"><strong>41.2K</strong><small>Customer identities</small></div>
+            <div class="brain-stat"><strong>72.8K</strong><small>Meta touchpoints</small></div>
+            <div class="brain-stat"><strong>9.2M</strong><small>Identity links</small></div>
+          </div>
+          <div class="brain-cta">Click to explore the intelligence graph <span>↗</span></div>
+        </div>
+      </section>
+
+      <section class="integrations">
+        <div class="integration"><div class="integration-top"><div class="platform-logo meta">M</div><div><strong>Meta</strong><small>Pixel + CAPI</small></div><i class="connect-state"></i></div><div class="integration-foot"><span>Events 24h <b>78,420</b></span><span>EMQ <b>8.9</b></span></div></div>
+        <div class="integration"><div class="integration-top"><div class="platform-logo tiktok">T</div><div><strong>TikTok</strong><small>Pixel + Events API</small></div><i class="connect-state"></i></div><div class="integration-foot"><span>Events 24h <b>31,904</b></span><span>Health <b>99%</b></span></div></div>
+        <div class="integration"><div class="integration-top"><div class="platform-logo google">G</div><div><strong>Google Ads</strong><small>Enhanced Conversions</small></div><i class="connect-state"></i></div><div class="integration-foot"><span>Events 24h <b>18,115</b></span><span>Health <b>98%</b></span></div></div>
+        <div class="integration"><div class="integration-top"><div class="platform-logo snap">S</div><div><strong>Snapchat</strong><small>Conversions API</small></div><i class="connect-state off"></i></div><div class="integration-foot"><span>Not connected</span><span><b>Connect →</b></span></div></div>
+      </section>
+
+      <section class="panel orders-panel">
+        <div class="panel-head"><div><div class="panel-title">Latest purchases</div><div class="panel-sub">Click an order to inspect its complete matching evidence</div></div><div class="right"><button class="tiny-btn">View all orders</button></div></div>
+        <div id="orders"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div class="drawer-backdrop" id="drawerBackdrop"></div>
+<div class="drawer" id="brainDrawer" aria-hidden="true">
+  <div class="drawer-head"><div class="drawer-title">Magnum Brain</div><span class="brain-status">ONLINE</span><button class="icon-btn close" data-close aria-label="Close">×</button></div>
+  <div class="drawer-body">
+    <div class="brain-hero">
+      <div class="brain-hero-top">
+        <div class="mini-brain">◌</div>
+        <div><h2>The identity layer behind every conversion.</h2><p>Magnum Brain continuously links visitors, Shopify commerce identifiers, ad clicks, customers and outbound platform events into one explainable graph.</p></div>
+      </div>
+      <div class="brain-kpis">
+        <div class="brain-kpi"><strong>128,439</strong><span>VISITORS</span></div>
+        <div class="brain-kpi"><strong>41,284</strong><span>CUSTOMERS</span></div>
+        <div class="brain-kpi"><strong>12.4M</strong><span>SIGNALS</span></div>
+        <div class="brain-kpi"><strong>91.7%</strong><span>ORDER MATCH</span></div>
+      </div>
+    </div>
+
+    <div class="section-title"><strong>Live identity graph</strong><span>Example customer journey</span></div>
+    <div class="graph">
+      <svg viewBox="0 0 700 270" preserveAspectRatio="none" aria-hidden="true">
+        <line x1="96" y1="62" x2="290" y2="54"/><line x1="290" y1="54" x2="604" y2="70"/><line x1="96" y1="62" x2="180" y2="205"/><line x1="290" y1="54" x2="368" y2="213"/><line x1="180" y1="205" x2="368" y2="213"/><line x1="368" y1="213" x2="604" y2="205"/><line x1="604" y1="70" x2="604" y2="205"/>
+      </svg>
+      <div class="node n1 hot"><b>Meta click</b><small>fbclid + fbc</small></div>
+      <div class="node n2"><b>mg_v_8d1…</b><small>Magnum visitor</small></div>
+      <div class="node n3"><b>Shopify client</b><small>clientId 9c8…</small></div>
+      <div class="node n4"><b>Cart</b><small>cartToken abc…</small></div>
+      <div class="node n5 hot"><b>Checkout</b><small>checkoutToken def…</small></div>
+      <div class="node n6 hot"><b>Order #15382</b><small>13/13 signals</small></div>
+    </div>
+
+    <div class="section-title"><strong>Brain database</strong><span>What Magnum currently knows</span></div>
+    <div class="data-table">
+      <div class="data-row header"><span>Entity</span><span>Primary key</span><span>Records</span><span>Health</span></div>
+      <div class="data-row"><b>Visitors</b><span>mg_visitor_id</span><span>128.4K</span><span class="type-chip">99.9%</span></div>
+      <div class="data-row"><b>Shopify clients</b><span>clientId</span><span>126.8K</span><span class="type-chip">98.7%</span></div>
+      <div class="data-row"><b>Meta touchpoints</b><span>fbclid / fbc</span><span>72.8K</span><span class="type-chip">97.4%</span></div>
+      <div class="data-row"><b>Carts</b><span>cartToken</span><span>84.6K</span><span class="type-chip">99.1%</span></div>
+      <div class="data-row"><b>Checkouts</b><span>checkoutToken</span><span>19.3K</span><span class="type-chip">99.8%</span></div>
+      <div class="data-row"><b>Customers</b><span>Shopify customer</span><span>41.2K</span><span class="type-chip">96.2%</span></div>
+      <div class="data-row"><b>Orders</b><span>Shopify order</span><span>18.7K</span><span class="type-chip">100%</span></div>
+      <div class="data-row"><b>Outbound events</b><span>event_id</span><span>1.84M</span><span class="type-chip">99.99%</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="drawer order-drawer" id="orderDrawer" aria-hidden="true">
+  <div class="drawer-head"><div class="drawer-title" id="orderDrawerTitle">Order #15382</div><span class="brain-status">HIGH CONFIDENCE</span><button class="icon-btn close" data-close aria-label="Close">×</button></div>
+  <div class="drawer-body">
+    <div class="brain-hero">
+      <div class="brain-hero-top"><div class="mini-brain">✓</div><div><h2 id="orderHeadline">Meta Purchase matched with 13 signals.</h2><p id="orderSummary">Magnum joined this order through checkoutToken, preserved the original Meta click and sent a complete advanced matching payload.</p></div></div>
+      <div class="brain-kpis"><div class="brain-kpi"><strong id="drawerScore">96/100</strong><span>MATCH SCORE</span></div><div class="brain-kpi"><strong>1.1s</strong><span>DELIVERY</span></div><div class="brain-kpi"><strong>8.9</strong><span>META EMQ</span></div><div class="brain-kpi"><strong>€86.40</strong><span>ORDER VALUE</span></div></div>
+    </div>
+
+    <div class="section-title"><strong>Advanced matching signals</strong><span>Exact evidence sent/available</span></div>
+    <div class="match-grid" id="matchGrid"></div>
+
+    <div class="section-title"><strong>Identity path</strong><span>Deterministic links</span></div>
+    <div class="graph" style="height:235px">
+      <svg viewBox="0 0 700 235" preserveAspectRatio="none" aria-hidden="true"><line x1="90" y1="62" x2="290" y2="58"/><line x1="290" y1="58" x2="580" y2="68"/><line x1="90" y1="62" x2="190" y2="180"/><line x1="190" y1="180" x2="390" y2="178"/><line x1="390" y1="178" x2="580" y2="68"/><line x1="390" y1="178" x2="590" y2="180"/></svg>
+      <div class="node n1 hot"><b>fbclid AQ…</b><small>Meta click</small></div><div class="node n2"><b>mg_v_8d1…</b><small>visitor</small></div><div class="node n3"><b>clientId 9c8…</b><small>Shopify</small></div><div class="node n4"><b>cart abc…</b><small>proxy bridge</small></div><div class="node n5 hot"><b>checkout def…</b><small>checkout token</small></div><div class="node n6 hot"><b id="graphOrder">Order #15382</b><small>Purchase</small></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast">Prototype interaction</div>
+
+<script>
+  const eventTemplates = [
+    {name:'PageView', cls:'', route:'proxy', detail:'teenwear.eu/collections/jeans'},
+    {name:'ViewContent', cls:'', route:'proxy', detail:'Destroyli Black Jeans'},
+    {name:'AddToCart', cls:'cart', route:'proxy', detail:'variant 4928371 · qty 1'},
+    {name:'InitiateCheckout', cls:'checkout', route:'pixel', detail:'checkoutToken def…'},
+    {name:'AddPaymentInfo', cls:'checkout', route:'pixel', detail:'billing data enriched'},
+    {name:'Purchase', cls:'purchase', route:'server', detail:'€86.40 · 13 match signals'},
+  ];
+
+  const initialEvents = [
+    ['Purchase','purchase','server','mg_v_8d1a92','€86.40 · 13 match signals','now'],
+    ['InitiateCheckout','checkout','pixel','mg_v_53b0c1','checkoutToken 8bf…','2s'],
+    ['AddToCart','cart','proxy','mg_v_90fe42','Destroyli Black · M','4s'],
+    ['ViewContent','','proxy','mg_v_c20aa4','Oversized Jersey Black','6s'],
+    ['PageView','','proxy','mg_v_b8121f','/collections/t-shirts','7s'],
+    ['Purchase','purchase','server','mg_v_6b290a','€112.95 · 12 match signals','9s'],
+    ['AddPaymentInfo','checkout','pixel','mg_v_1d48c2','email + phone enriched','11s'],
+    ['AddToCart','cart','proxy','mg_v_720d33','Washed Baggy Jeans · L','12s'],
+    ['ViewContent','','proxy','mg_v_407fe1','Grey Zip Hoodie','14s'],
+    ['PageView','','proxy','mg_v_319c8a','/?fbclid=AQ…','15s'],
+    ['InitiateCheckout','checkout','pixel','mg_v_52fd11','checkoutToken 1ca…','18s'],
+    ['Purchase','purchase','server','mg_v_f1d72c','€64.95 · 10 match signals','20s'],
+    ['ViewContent','','proxy','mg_v_038aba','Baggy Fit Denim Blue','23s'],
+    ['AddToCart','cart','proxy','mg_v_933ac8','Opium Long Sleeve · S','25s'],
+  ];
+
+  const orders = [
+    {id:'#15382', customer:'Lukas M. · Germany', value:'€86.40', score:96, status:'Matched', source:'Meta'},
+    {id:'#15381', customer:'Matteo R. · Italy', value:'€112.95', score:92, status:'Matched', source:'Meta'},
+    {id:'#15380', customer:'Emma B. · France', value:'€64.95', score:78, status:'Partial', source:'Direct'},
+    {id:'#15379', customer:'Jakub K. · Czechia', value:'€74.50', score:89, status:'Matched', source:'Meta'},
+    {id:'#15378', customer:'Sofia L. · Austria', value:'€129.90', score:94, status:'Matched', source:'TikTok'},
+  ];
+
+  const signals = [
+    ['Email','SHA-256 customer email',true],['Phone','E.164 normalized + SHA-256',true],
+    ['First name','Normalized + SHA-256',true],['Last name','Normalized + SHA-256',true],
+    ['City','Customer address',true],['State / province','Customer address',true],
+    ['Postal code','Customer address',true],['Country','ISO-2 country',true],
+    ['External ID','Shopify + Magnum IDs',true],['fbc','Real Meta click preserved',true],
+    ['fbp','Browser ID preserved',true],['Client IP','Trusted proxy/server source',true],
+    ['User agent','Original browser UA',true],['Checkout token','Deterministic order bridge',true],
+  ];
+
+  const feed = document.getElementById('eventFeed');
+  const countEl = document.getElementById('eventCount');
+  let count = 128439;
+
+  function routeLabel(route){ return route === 'proxy' ? 'PROXY' : route === 'server' ? 'SERVER' : 'PIXEL'; }
+  function rowHtml(e, isNew=false){
+    return `<div class="event-row${isNew?' new':''}">
+      <i class="event-dot ${e[1]}"></i>
+      <span class="event-name">${e[0]}</span>
+      <span class="event-id">${e[3]}</span>
+      <span class="event-detail">${e[4]}</span>
+      <span class="route-chip ${e[2]}">${routeLabel(e[2])}</span>
+      <span class="event-time">${e[5]}</span>
+    </div>`;
+  }
+  feed.innerHTML = initialEvents.map(e=>rowHtml(e)).join('');
+
+  function randomVisitor(){ return 'mg_v_' + Math.random().toString(16).slice(2,8); }
+  function pushEvent(){
+    const t = eventTemplates[Math.floor(Math.random()*eventTemplates.length)];
+    const arr = [t.name,t.cls,t.route,randomVisitor(),t.detail,'now'];
+    feed.insertAdjacentHTML('afterbegin',rowHtml(arr,true));
+    while(feed.children.length>30) feed.lastElementChild.remove();
+    count += Math.floor(Math.random()*4)+1;
+    countEl.textContent = count.toLocaleString('en-US');
+    document.getElementById('liveBadge').textContent = Math.min(99, Math.floor(Math.random()*20)+20);
+    document.getElementById('eventsPerMin').textContent = (Math.floor(Math.random()*50)+160) + ' events/min';
+  }
+  setInterval(pushEvent, 2400);
+
+  const ordersEl = document.getElementById('orders');
+  ordersEl.innerHTML = orders.map((o,i)=>`<div class="order-row" data-order="${i}"><span class="order-num">${o.id}</span><span class="customer">${o.customer}</span><span class="money">${o.value}</span><span class="score ${o.score<85?'medium':''}"><span class="score-bar"><span style="width:${o.score}%"></span></span>${o.score}</span><span class="matched ${o.status==='Partial'?'partial':''}">${o.status}</span><span class="source">${o.source}</span></div>`).join('');
+
+  const backdrop = document.getElementById('drawerBackdrop');
+  const brainDrawer = document.getElementById('brainDrawer');
+  const orderDrawer = document.getElementById('orderDrawer');
+  const toast = document.getElementById('toast');
+  let toastTimer;
+
+  function showToast(text){
+    toast.textContent=text;toast.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.classList.remove('show'),1700);
+  }
+  function openDrawer(drawer){
+    backdrop.classList.add('open');drawer.classList.add('open');drawer.setAttribute('aria-hidden','false');
+  }
+  function closeDrawers(){
+    backdrop.classList.remove('open');[brainDrawer,orderDrawer].forEach(d=>{d.classList.remove('open');d.setAttribute('aria-hidden','true')});
+  }
+  backdrop.addEventListener('click',closeDrawers);
+  document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',closeDrawers));
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawers()});
+
+  document.getElementById('brainCard').addEventListener('click',()=>openDrawer(brainDrawer));
+  document.getElementById('brainNav').addEventListener('click',()=>openDrawer(brainDrawer));
+  document.getElementById('openBrainHero').addEventListener('click',()=>openDrawer(brainDrawer));
+
+  function populateSignals(order){
+    const partial = order.score < 85;
+    document.getElementById('matchGrid').innerHTML = signals.map((s,idx)=>{
+      const present = partial ? ![9,10,5].includes(idx) : s[2];
+      return `<div class="signal-item ${present?'':'missing'}"><i></i><div><b>${s[0]} ${present?'✓':'—'}</b><small>${present?s[1]:'Not available for this order'}</small></div></div>`;
+    }).join('');
+  }
+
+  function openOrder(i){
+    const o=orders[i];
+    document.getElementById('orderDrawerTitle').textContent='Order '+o.id;
+    document.getElementById('drawerScore').textContent=o.score+'/100';
+    document.getElementById('graphOrder').textContent='Order '+o.id;
+    document.getElementById('orderHeadline').textContent=o.status==='Matched'?'Purchase matched with strong evidence.':'Purchase has partial browser evidence.';
+    document.getElementById('orderSummary').textContent=o.status==='Matched'?'Magnum deterministically linked browser, commerce and customer identifiers before sending the outbound conversion.':'Shopify confirms the order, but some ad-click/browser identifiers are missing. Magnum will not fabricate them.';
+    populateSignals(o);openDrawer(orderDrawer);
+  }
+  ordersEl.addEventListener('click',e=>{const row=e.target.closest('.order-row');if(row)openOrder(Number(row.dataset.order));});
+  document.getElementById('inspectLatest').addEventListener('click',()=>openOrder(0));
+
+  document.querySelectorAll('.nav button[data-nav]').forEach(btn=>btn.addEventListener('click',()=>{
+    document.querySelectorAll('.nav button').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');document.getElementById('pageTitle').textContent=btn.dataset.nav;showToast(`${btn.dataset.nav} page is planned for V2`);
+  }));
+  document.querySelectorAll('.tiny-btn').forEach(btn=>btn.addEventListener('click',()=>showToast('Filter interaction — backend wiring comes next')));
+</script>
+</body>
+</html>
