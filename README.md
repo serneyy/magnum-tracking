@@ -1,1059 +1,546 @@
 # Magnum Tracking
 
-**Magnum** is Teenwear's first-party + server-side tracking layer for Shopify, built to maximize the amount of **legitimate, matchable conversion data** sent to Meta while preserving deterministic attribution, deduplication, consent state and a complete internal audit trail.
+Magnum is a Shopify-focused server-side tracking system built to maximize **truthful conversion matching** for Meta.
 
-The goal is not to make Meta report every Shopify order at any cost. The goal is to make sure that when an order really came from a Meta visit, Magnum preserves enough identity and click context from the first page view through checkout and order creation for Meta to match it reliably.
+The main idea is simple: do not wait until the order exists and then try to guess where it came from. Preserve the customer's identity and ad-click context during the whole journey, connect that browser journey to Shopify's checkout, then connect the checkout to the final order.
+
+Magnum will use a **third-party collector domain** such as:
+
+```text
+https://d.magnum.com
+```
+
+The collector does **not** need to live on `teenwear.eu`. However, the Shopify Web Pixel will still use Shopify's top-frame `browser.localStorage`, `browser.sessionStorage` and cookie APIs to preserve identifiers on the storefront when consent allows it.
+
+> Important: `d.magnum.com` is the intended production pattern. We must only use a hostname/domain that we actually control before deployment.
 
 ---
 
-## What Magnum solves
+## Primary objective
 
-Normal browser-only tracking loses signal when:
+For every real Shopify order, Magnum should answer:
 
-- cookies are restricted or cleared
-- the user moves from product page to Shopify checkout
-- `fbclid` disappears from the URL
-- `_fbc` / `_fbp` are not available at purchase time
-- the purchase browser event is blocked
-- the browser closes before the event is delivered
-- checkout happens on a different Shopify surface
-- a server event has no link back to the original browser visit
+```text
+Which browser visitor created this order?
+Which Shopify clientId belonged to that visitor?
+Which cart and checkout belonged to the visitor?
+Was there a real Meta click?
+Which fbclid / fbc / fbp were present?
+Which customer match keys were available?
+Which data was finally sent to Meta?
+```
 
-Magnum solves this by building an **identity graph** during the full customer journey and then reconstructing the strongest truthful purchase payload once Shopify confirms the order.
+The success metric is not "send more Purchase events".
+
+The success metric is:
+
+```text
+real Shopify order
+        -> deterministic browser/checkout identity
+        -> strongest legitimate Meta match payload
+        -> one deduplicated Purchase event
+```
 
 ---
 
-# Production infrastructure
-
-Magnum will run on **Google Cloud Platform**.
-
-Primary region:
+# Architecture
 
 ```text
-europe-west3 (Frankfurt, Germany)
-```
-
-Reason:
-
-- close to Teenwear's main EU traffic
-- EU-hosted infrastructure
-- managed autoscaling
-- no single manually maintained VPS
-- durable database and queue
-- easy monitoring and secret management
-
-## Public tracking endpoint
-
-```text
-https://track.teenwear.eu
-```
-
-The storefront will communicate with a Teenwear-owned first-party hostname rather than directly calling a random third-party tracking domain.
-
-Planned DNS / request path:
-
-```text
-Browser / Shopify
-      |
-      | HTTPS
-      v
-track.teenwear.eu
-      |
-      v
-Google Cloud External Application Load Balancer
-      |
-      v
-Cloud Run: magnum-api
-```
-
-The load balancer terminates HTTPS and routes requests to a serverless Cloud Run backend.
-
----
-
-# Google Cloud services
-
-## 1. Cloud Run — `magnum-api`
-
-Main stateless API service.
-
-Responsibilities:
-
-- receive browser identity updates
-- receive browser event payloads
-- receive Shopify webhooks
-- verify Shopify webhook signatures
-- normalize tracking data
-- resolve visitor/cart/checkout/order identity
-- write events to PostgreSQL
-- enqueue outbound platform deliveries
-- expose health endpoints
-- expose protected internal debugging endpoints
-
-Cloud Run is intentionally stateless. **No important identity or deduplication state may live only in RAM.**
-
----
-
-## 2. Cloud SQL — PostgreSQL
-
-PostgreSQL is Magnum's source of truth.
-
-Planned logical tables:
-
-```text
-visitors
-sessions
-touchpoints
-identifiers
-carts
-checkouts
-customers
-orders
-order_items
-consent_states
-events
-platform_deliveries
-attribution_links
-webhook_receipts
-```
-
-It stores mappings such as:
-
-```text
-visitor_id
-   -> session_id
-   -> fbclid / fbc / fbp
-   -> cart_token
-   -> checkout_token
-   -> Shopify customer ID
-   -> Shopify order ID
-```
-
-This mapping is the core of Magnum.
-
-A purchase should never depend on an in-memory JavaScript `Map` or `Set` surviving a server restart.
-
----
-
-## 3. Pub/Sub — durable event queue
-
-Outbound delivery will be asynchronous.
-
-Example flow:
-
-```text
-Shopify order webhook
+Shopify storefront / checkout
+        |
+        | Shopify Web Pixel
+        |
+        | HTTPS
+        v
+   d.magnum.com
         |
         v
-    Magnum API
+Google Cloud HTTPS Load Balancer
         |
         v
-  PostgreSQL transaction
+Google Cloud Run: magnum-api
         |
-        v
-      Pub/Sub
+        +--------------------+
+        |                    |
+        v                    v
+Cloud SQL PostgreSQL      Pub/Sub
+        |                    |
+        |                    v
+        |              magnum-worker
+        |                    |
+        |                    v
+        |                 Meta CAPI
         |
-        v
-Cloud Run: magnum-worker
+        ^
         |
-        v
-      Meta CAPI
+Shopify order webhook / Admin GraphQL
 ```
 
-Why:
+## Hosting
 
-- Shopify webhook processing stays fast
-- temporary Meta failures do not lose purchases
-- delivery can retry safely
-- traffic spikes do not overload the API
-- failures can move to a dead-letter path for investigation
+Magnum will run on Google Cloud Platform.
+
+Recommended primary region:
+
+```text
+europe-west3 (Frankfurt)
+```
+
+Components:
+
+- **Cloud Run** — collector/API and asynchronous workers
+- **Cloud SQL PostgreSQL** — durable identity graph, events and deduplication state
+- **Pub/Sub** — reliable outbound event queue and retries
+- **Secret Manager** — Meta token, Shopify secrets and database credentials
+- **Cloud Logging + Monitoring** — event failures, queue backlog, match quality and health checks
+
+The application must remain stateless at the Cloud Run process level. Identity and deduplication must never depend on an in-memory `Map` or `Set` in production.
 
 ---
 
-## 4. Cloud Run — `magnum-worker`
+# The identity graph
 
-Background delivery worker.
+Magnum's core is not Meta CAPI. The core is the identity graph.
 
-Responsibilities:
-
-- consume queued normalized events
-- build platform-specific payloads
-- send events to Meta CAPI
-- record responses
-- retry retryable failures
-- prevent duplicate delivery
-- move permanently failing events to dead-letter state
-
----
-
-## 5. Secret Manager
-
-Secrets must never be committed to GitHub.
-
-Examples:
+A single customer journey can gradually accumulate these identifiers:
 
 ```text
-META_ACCESS_TOKEN
-META_PIXEL_ID
-SHOPIFY_WEBHOOK_SECRET
-DATABASE_URL / DB credentials
-INTERNAL_ADMIN_SECRET
-```
-
-Cloud Run receives these through Secret Manager at runtime.
-
----
-
-## 6. Cloud Logging + Monitoring
-
-Magnum must be observable.
-
-We should alert when:
-
-- Shopify purchase webhooks stop arriving
-- browser identify traffic drops suddenly
-- Meta starts rejecting events
-- queue backlog increases
-- repeated delivery retries occur
-- purchase match-data completeness falls
-- duplicate events spike
-- webhook signature verification fails repeatedly
-- database connections/errors spike
-
-Important dashboards:
-
-```text
-browser events / minute
-Shopify orders / hour
-Meta purchase sends / hour
-Meta accepted / rejected
-queue age
-retry count
-identity match completeness
-fbc coverage
-fbp coverage
-email coverage
-phone coverage
-order -> visitor resolution rate
-```
-
----
-
-# Full customer tracking flow
-
-## Step 1 — visitor lands on Teenwear
-
-Example:
-
-```text
-https://www.teenwear.eu/products/example
-  ?fbclid=IwZXh0...
-  &utm_source=facebook
-  &utm_medium=paid_social
-  &utm_campaign=back_to_school
-```
-
-Once marketing tracking is allowed, Magnum creates or restores:
-
-```text
-visitor_id = mg_v_<uuid>
-session_id = mg_s_<uuid>
-```
-
-The browser layer captures available context:
-
-```text
-landing_url
-current_url
-referrer
+mg_visitor_id
+mg_session_id
+Shopify clientId
+Shopify cart id/token
+Shopify checkout token
+Shopify customer id
+Shopify order id
+email hash
+phone hash
+name/address hashes where permitted
 fbclid
 fbc
 fbp
-utm_source
-utm_medium
-utm_campaign
-utm_content
-utm_term
-timestamp
+UTM data
+landing URL
+referrer
 ```
-
-Magnum stores two attribution touchpoints:
-
-```text
-first_touch
-last_touch
-```
-
-### First touch
-
-The earliest eligible campaign/source touch known for the visitor.
-
-It should remain stable.
-
-### Last touch
-
-The most recent eligible campaign/source touch.
-
-It may update when a later campaign visit occurs.
-
----
-
-# Meta click identifiers
-
-## `fbclid`
-
-Meta may append a click identifier to the landing URL.
 
 Example:
 
 ```text
-fbclid=IwZXh0bgNhZW0...
+mg_visitor_id:       mg_v_8d1...
+shopify_client_id:  9c8...
+cart_token:          abc...
+checkout_token:      def...
+customer_id:         gid://shopify/Customer/...
+order_id:            gid://shopify/Order/...
+fbc:                 fb.1.1787....AQ...
+fbp:                 fb.1.1787....123...
 ```
 
-Magnum captures it immediately before it disappears during navigation or checkout.
+These values are not interchangeable. They are independent evidence that the same journey belongs together.
 
-## `fbc`
+---
 
-When appropriate, the Meta click context is represented using `_fbc` / `fbc`.
+# Matching priority
 
-The important rule is:
+Magnum will prefer deterministic links and will not invent attribution.
 
-> Magnum preserves real Meta click identifiers. It does not invent fake click IDs for orders that do not have one.
+## Level 1 — checkout token
 
-## `fbp`
+This is the strongest commerce bridge.
 
-Magnum captures the available Meta browser identifier and links it to the Magnum visitor identity.
-
-At purchase time we want to be able to send Meta a payload containing, where legitimately available:
+Shopify Web Pixel exposes `checkout.token` during checkout events. Shopify Admin GraphQL exposes `Order.checkoutToken` on the final order.
 
 ```text
-fbc
-fbp
-hashed email
-hashed phone
-hashed external_id
-client IP
-user agent
+browser checkout_started
+checkout.token = XYZ
+        |
+        v
+Magnum stores XYZ -> visitor
+        |
+        v
+Shopify order
+Order.checkoutToken = XYZ
+        |
+        v
+exact identity match
 ```
 
-The more valid matching fields we preserve, the better Meta's chance of matching the server purchase to the correct person/click.
+## Level 2 — cart token / cart id
+
+Shopify also exposes cart identity and the Admin GraphQL Order object includes `cartToken` in API version 2026-07 and later.
+
+This becomes a second deterministic bridge.
+
+## Level 3 — Shopify clientId + Magnum visitor ID
+
+Every Shopify Web Pixel event includes Shopify's `event.clientId`.
+
+Magnum stores both:
+
+```text
+mg_visitor_id <-> shopify_client_id
+```
+
+This gives us another stable browser-side relationship across customer events.
+
+## Level 4 — customer identifiers
+
+When allowed and available, checkout can provide:
+
+- email
+- phone
+- first name
+- last name
+- city
+- province/state
+- postal code
+- country
+- Shopify customer ID
+
+Raw protected customer data should not be retained unnecessarily. The planned ingestion flow is:
+
+```text
+TLS request
+   -> normalize on Magnum server
+   -> SHA-256 where Meta requires hashing
+   -> persist normalized hashes / minimum required data
+   -> discard unnecessary raw values
+```
+
+The order webhook runs the same normalization so checkout identity can be linked to the final order.
+
+## Level 5 — network context
+
+The collector/API can capture the request IP and the Web Pixel provides browser user-agent context.
+
+IP and user agent are useful Meta match keys, but Magnum must not use IP-only probabilistic matching to claim that an order came from a particular ad click.
 
 ---
 
-# Step 2 — identity is persisted server-side
+# Meta click preservation
 
-The browser sends an identity snapshot to:
+A Meta ad landing can contain:
 
-```http
-POST https://track.teenwear.eu/v1/identify
+```text
+?fbclid=AQ...
 ```
 
-Logical example:
+Magnum captures the real `fbclid` immediately and preserves a matching `fbc` value.
 
-```json
-{
-  "visitor_id": "mg_v_123",
-  "session_id": "mg_s_456",
-  "cart_token": "cart_abc",
-  "first_touch": {
-    "fbclid": "IwZX...",
-    "fbc": "fb.1....",
-    "fbp": "fb.1....",
-    "utm_source": "facebook",
-    "utm_campaign": "back_to_school",
-    "landing_url": "https://www.teenwear.eu/..."
-  },
-  "last_touch": {
-    "utm_source": "facebook",
-    "utm_campaign": "back_to_school"
-  }
-}
+Expected format:
+
+```text
+fb.1.<timestamp_in_milliseconds>.<fbclid>
 ```
 
-The API writes/merges this state into PostgreSQL.
+Example:
+
+```text
+fb.1.1787875123456.AQ...
+```
+
+Rules:
+
+1. Never fabricate `fbc` without a real `fbclid`.
+2. Prefer an existing valid `_fbc` cookie when it represents the same click.
+3. If a real `fbclid` is present and `_fbc` is not yet available, construct `fbc` once with the capture timestamp in **milliseconds**.
+4. Preserve the exact value. Do not recreate it on every page because changing the timestamp creates different click identities for the same click.
+5. Read `_fbp` when available and preserve the last known value as a fallback.
+6. Do not hash `fbc` or `fbp`.
+
+Magnum stores attribution as a **touchpoint history**, not only one mutable field.
+
+Example:
+
+```text
+2026-08-27 13:40
+Meta click A
+campaign = Back To School
+fbc = ...A
+
+2026-08-28 18:10
+Meta click B
+campaign = Jeans
+fbc = ...B
+
+2026-08-28 18:31
+Purchase
+```
+
+This lets Magnum understand which legitimate touch existed before the purchase instead of overwriting historical evidence blindly.
 
 ---
 
-# Step 3 — Shopify Web Pixel captures storefront events
+# First collector: Shopify Custom Pixel
 
-The Shopify Web Pixel / browser SDK should subscribe to relevant Shopify customer events.
+The first executable collector is located at:
 
-Initial event set:
+```text
+shopify-pixel/magnum-custom-pixel.js
+```
+
+It is intentionally written as a **Shopify Custom Pixel** first because it can be installed and tested directly in Shopify Admin without building the full Shopify app extension first.
+
+Later, after the data model is proven, it should be migrated into a proper Magnum Shopify App Pixel.
+
+The collector subscribes only to an explicit allowlist of useful Shopify events:
 
 ```text
 page_viewed
 product_viewed
-collection_viewed
-search_submitted
 product_added_to_cart
 cart_viewed
 checkout_started
 checkout_contact_info_submitted
 checkout_address_info_submitted
+checkout_shipping_info_submitted
 payment_info_submitted
 checkout_completed
 ```
 
-Magnum normalizes these into internal events such as:
+For each allowed event it sends a normalized envelope containing:
 
 ```text
-PageView
-ViewContent
-Search
-AddToCart
-InitiateCheckout
-AddPaymentInfo
-Purchase
+Magnum visitor ID
+Magnum session ID
+Shopify clientId
+Shopify cart ID
+Shopify customer ID when available
+current / first / last attribution touch
+fbclid / fbc / fbp when legitimately available
+UTM parameters
+page URL / referrer
+Shopify event ID / sequence / timestamp
+checkout token when available
+minimum checkout match fields when available
+product/cart context needed for later event generation
+consent state
 ```
 
-Not every browser event needs to be sent immediately to Meta server-side. The first priority is to preserve identity and funnel context reliably.
+It does **not** forward Shopify's entire raw event object. Explicit normalization reduces accidental collection and prevents schema changes from silently adding unnecessary data.
 
 ---
 
-# Step 4 — cart identity bridge
+# Consent model
 
-As soon as Shopify exposes a cart identifier/token, Magnum links it to the visitor.
+Magnum will respect Shopify Customer Privacy state.
 
-```text
-visitor_id
-    |
-    +--> cart_token
-```
-
-Example database relationship:
+The first Meta-focused collector requires eligible analytics + marketing consent before it persists marketing identity or sends marketing-attribution data.
 
 ```text
-mg_v_123 -> cart_abc
+analyticsProcessingAllowed = true
+marketingAllowed = true
 ```
 
-This matters because the cart identifier can survive deeper into Shopify's checkout journey even when the original landing URL no longer exists.
+The pixel also listens for Shopify's `visitorConsentCollected` event so state can change during the session.
+
+We will not build the product around bypassing a customer's reject decision.
 
 ---
 
-# Step 5 — checkout identity bridge
+# Browser collection vs Shopify server truth
 
-When checkout begins, Magnum attempts to link:
+Browser collection gives us attribution context.
 
-```text
-visitor_id
-cart_token
-checkout_token / checkout identity
-```
+Shopify server events give us purchase truth.
 
-Result:
+The final Purchase should therefore be based primarily on Shopify's order lifecycle, not on trusting only the browser success page.
 
 ```text
-visitor
-  -> session
-  -> click
-  -> cart
-  -> checkout
+Browser
+  -> captures fbclid/fbc/fbp + clientId + checkoutToken
+
+Shopify
+  -> confirms the actual order
+
+Magnum
+  -> joins both datasets
+  -> creates final Purchase
+  -> sends Meta CAPI
 ```
 
-If checkout later provides eligible customer information, Magnum can add:
+This is important because the browser can close, an ad blocker can stop the collector request, or the customer can complete checkout in a way where the browser event is unreliable.
 
-```text
-email
-phone
-Shopify customer ID
-```
-
-Sensitive matching data should be normalized and hashed as required before platform delivery.
+A third-party `d.magnum.com` collector can also be blocked by some privacy/ad-blocking tools. That is a real tradeoff of not using a first-party collection hostname. The Shopify order webhook still protects purchase delivery, but blocked browser collection can reduce the amount of click identity available for matching.
 
 ---
 
-# Step 6 — Shopify confirms the order server-side
+# Purchase delivery and deduplication
 
-The browser Purchase event is useful, but it must not be the only source of truth.
-
-Shopify sends a signed order webhook to Magnum.
-
-Example endpoint:
-
-```http
-POST https://track.teenwear.eu/webhooks/shopify/orders/create
-```
-
-Magnum verifies the Shopify HMAC signature before accepting the payload.
-
-The order webhook gives us authoritative server-side order data such as:
+Magnum will eventually support both:
 
 ```text
-order ID
-order number
-checkout reference
-customer ID
-email
-phone
-currency
-total price
-tax
-shipping
-line items
-created_at
+browser Purchase
+server Purchase
 ```
 
-The exact fields depend on the Shopify webhook/API payload available to the integration.
-
----
-
-# Step 7 — Magnum reconstructs the order identity
-
-The resolver attempts to join the order back to the browser journey using the strongest available mappings.
-
-Conceptually:
-
-```text
-Shopify order
-     |
-     +-- checkout token/reference
-     |
-     +-- cart token/reference
-     |
-     +-- customer ID
-     |
-     +-- normalized email
-     |
-     +-- normalized phone
-     v
-Magnum visitor identity
-     |
-     +-- fbc
-     +-- fbp
-     +-- Meta click
-     +-- first touch
-     +-- last touch
-     +-- session
-     +-- landing page
-     +-- browser context
-```
-
-The resolver must record **why** a match was made.
+When both are used, they must share the same deterministic Meta `event_id`.
 
 Example:
 
 ```text
-order #12345
-visitor: mg_v_123
-resolution method: checkout_token
-confidence: deterministic
+magnum_purchase_<shopify_order_id>
 ```
 
-or:
+Then:
 
 ```text
-order #12346
-visitor: mg_v_789
-resolution method: normalized_email + recent checkout
-confidence: secondary
+browser Purchase  ----+
+                     +--> Meta sees one Purchase
+server Purchase   ----+
 ```
 
-We should avoid weak guessing that could incorrectly attach an order to the wrong click.
+Server delivery is queued through Pub/Sub and stored in PostgreSQL before outbound delivery.
+
+Temporary Meta errors use exponential retries. Permanent API validation errors move the event to a failed/dead-letter state for debugging instead of retrying forever.
 
 ---
 
-# Step 8 — build the Meta Purchase payload
+# Magnum Match Score
 
-A normalized Purchase event is created.
-
-Example conceptual payload:
-
-```json
-{
-  "event_name": "Purchase",
-  "event_time": 1787870000,
-  "event_id": "purchase_<deterministic-order-id>",
-  "action_source": "website",
-  "event_source_url": "https://www.teenwear.eu/...",
-  "user_data": {
-    "em": ["<sha256>"],
-    "ph": ["<sha256>"],
-    "external_id": ["<sha256>"],
-    "fbc": "fb.1....",
-    "fbp": "fb.1....",
-    "client_ip_address": "...",
-    "client_user_agent": "..."
-  },
-  "custom_data": {
-    "currency": "EUR",
-    "value": 69.95,
-    "order_id": "12345",
-    "content_type": "product",
-    "contents": []
-  }
-}
-```
-
-Only fields legitimately available for that order are included.
-
----
-
-# Purchase value strategy
-
-Magnum should make the value sent to Meta configurable.
-
-Modes planned:
-
-```text
-GROSS
-NET_OF_TAX
-NET_OF_TAX_AND_SHIPPING
-CUSTOM
-```
-
-For Teenwear the expected preferred mode is:
-
-```text
-NET_OF_TAX
-```
-
-This avoids Meta reporting artificially inflated ROAS when VAT is not considered revenue internally.
-
-The Shopify order itself remains stored with full original monetary components so the calculation can be audited.
-
----
-
-# Browser + server deduplication
-
-If both the browser pixel and Magnum server send the same conversion, they must use the **same deterministic event ID**.
+Magnum will expose its own diagnostics for each order.
 
 Example:
 
 ```text
-browser Purchase event_id = purchase_12345
-server  Purchase event_id = purchase_12345
+ORDER #12345
+
+Commerce identity
+[OK] checkout token
+[OK] cart token
+[OK] Shopify clientId
+[OK] Magnum visitor ID
+
+Meta identity
+[OK] real fbclid captured
+[OK] fbc
+[OK] fbp
+
+Customer identity
+[OK] email hash
+[OK] phone hash
+[OK] customer ID
+[OK] postal/country match keys
+
+Network
+[OK] IP
+[OK] user agent
+
+Confidence: HIGH
 ```
 
-Meta can then deduplicate the two copies rather than count two purchases.
-
-Magnum also keeps its own idempotency key in PostgreSQL.
-
-A unique constraint should prevent:
-
-```text
-platform = meta
-event_name = Purchase
-order_id = 12345
-```
-
-from being delivered as multiple independent purchases.
+The score is a diagnostic tool only. It must never be used to manufacture missing Meta attribution.
 
 ---
 
-# Delivery and retry behavior
+# Implementation plan
 
-A Shopify order is never considered "sent" merely because Magnum attempted an HTTP request.
+## Phase 0 — collector prototype
 
-Delivery states:
+- [x] Define architecture
+- [x] Define identity graph
+- [x] Write first Shopify Custom Pixel collector
+- [ ] Install collector in a test Shopify environment
+- [ ] Inspect real payloads from Teenwear journeys
+
+## Phase 1 — Magnum ingestion API
+
+- [ ] `POST /v1/events`
+- [ ] Validate schema and payload size
+- [ ] Capture request IP server-side
+- [ ] Normalize identifiers
+- [ ] Persist visitor/session/event records
+- [ ] CORS / abuse protection / rate limiting
+
+## Phase 2 — PostgreSQL identity graph
+
+Tables/models for:
 
 ```text
-pending
-queued
-sending
-accepted
-retrying
-failed
-dead_letter
+visitors
+sessions
+shopify_clients
+carts
+checkouts
+customers
+touchpoints
+orders
+identity_links
+raw_ingest_events (short retention / optional)
+outbound_events
+delivery_attempts
 ```
 
-Example:
+Add unique indexes around deterministic identifiers such as checkout token and Shopify order ID.
 
-```text
-Purchase stored in PostgreSQL
-        |
-        v
-Pub/Sub message
-        |
-        v
-Meta request
-   /          \
-200 OK       timeout / 5xx / retryable error
-  |                    |
-accepted               v
-                    retry queue
-                        |
-                        v
-                    try again
-```
+## Phase 3 — Shopify order bridge
 
-Retries must use the same `event_id`.
+- [ ] Verified Shopify webhook ingestion
+- [ ] Fetch/order enrichment through Admin GraphQL
+- [ ] Read `Order.checkoutToken`
+- [ ] Read `Order.cartToken`
+- [ ] Read `Order.clientIp`
+- [ ] Normalize customer match data
+- [ ] Resolve order -> checkout -> visitor
 
-A retry must never become a new purchase.
+## Phase 4 — Meta CAPI
+
+- [ ] Build final `user_data`
+- [ ] email / phone / name / geography normalization + hashing
+- [ ] send raw `fbc`, `fbp`, IP and user-agent where appropriate
+- [ ] deterministic event IDs
+- [ ] queued delivery
+- [ ] retries / dead-letter handling
+- [ ] test event support
+
+## Phase 5 — diagnostics
+
+- [ ] Order debugger
+- [ ] Match score
+- [ ] Missing-signal reasons
+- [ ] Meta response logging
+- [ ] attribution/touchpoint timeline
+- [ ] daily tracking-health metrics
+
+## Phase 6 — production hardening
+
+- [ ] move Custom Pixel into Magnum Shopify App Pixel
+- [ ] protected customer data scopes
+- [ ] retention rules
+- [ ] encryption and key management
+- [ ] deployment pipeline
+- [ ] alerting
+- [ ] load tests
+- [ ] outage simulation
 
 ---
 
-# Consent behavior
+# What Magnum will not do
 
-Magnum is designed to improve tracking quality **without deliberately bypassing consent requirements**.
+Magnum will not:
 
-The browser layer should read Shopify Customer Privacy / consent state before using marketing tracking identifiers that require consent.
+- create fake `fbclid` or `fbc`
+- attach an old Meta click to an unrelated order merely to increase Ads Manager attribution
+- use IP similarity alone to claim ad attribution
+- intentionally create duplicate purchases
+- persist customer marketing identifiers after a consent state says they should not be processed
+- treat Meta's reported conversions as the source of truth for store revenue
 
-Conceptual states:
-
-```text
-unknown
-allowed
-denied
-```
-
-When marketing tracking is denied, Magnum should not secretly emulate a marketing cookie system simply to improve attribution.
-
-Server-side order processing required for store operations can still exist separately, but sending customer data to advertising platforms must follow the configured legal/consent policy.
-
-The consent state used for a tracking decision should be stored with the event for auditability.
+Shopify remains the source of truth for orders. Magnum improves the quality of the evidence sent to Meta.
 
 ---
 
-# Internal attribution debugger
+# Current repository status
 
-One of Magnum's most important features will be the ability to inspect a specific Shopify order and understand exactly what happened.
+The first server-side primitives live on the development branch and the first Shopify Custom Pixel collector lives in `shopify-pixel/`.
 
-Example internal view:
-
-```text
-Order: #12345
-Shopify order ID: 987654321
-Created: 2026-08-28 14:12:03 UTC
-
-IDENTITY
-Visitor: mg_v_123
-Session: mg_s_456
-Cart: cart_abc
-Checkout: chk_xyz
-Customer: 456789
-
-META SIGNALS
-fbclid: present
-fbc: present
-fbp: present
-email: present
-phone: present
-IP: present
-user agent: present
-
-ATTRIBUTION
-First touch: facebook / paid_social / back_to_school
-Last touch: facebook / paid_social / retargeting
-Resolution: checkout_token
-
-META DELIVERY
-Event ID: purchase_12345
-Status: accepted
-Attempts: 1
-Response ID: ...
-```
-
-This is how we stop guessing why Meta did or did not attribute an order.
-
----
-
-# Match completeness score
-
-Magnum should calculate an internal diagnostics score for each purchase.
-
-This is **not** Meta's official EMQ score. It is Magnum's own visibility metric.
-
-Example:
+The next concrete engineering target is:
 
 ```text
-fbc           yes
-fbp           yes
-email         yes
-phone         yes
-external_id   yes
-IP            yes
-user_agent    yes
---------------
-identity completeness: strong
+Shopify Custom Pixel
+       -> POST /v1/events
+       -> PostgreSQL identity graph
+       -> checkoutToken bridge
+       -> Shopify order
+       -> Meta CAPI Purchase
 ```
-
-Dashboard metrics should show percentages such as:
-
-```text
-Purchase with fbc:        62%
-Purchase with fbp:        91%
-Purchase with email:     100%
-Purchase with phone:      84%
-Order resolved to visitor: 93%
-```
-
-This lets us identify the actual weak point instead of blindly changing tracking providers.
-
----
-
-# Event timestamp policy
-
-Purchase `event_time` should represent the real conversion time as closely as possible, not simply the time a retry worker happens to send the event.
-
-Store:
-
-```text
-occurred_at
-received_at
-queued_at
-sent_at
-```
-
-If Meta is temporarily unavailable, a later retry keeps the original occurrence timestamp where platform rules allow it.
-
----
-
-# Refunds and order changes
-
-Magnum should store Shopify refunds, cancellations and relevant order updates internally.
-
-Planned webhook coverage:
-
-```text
-orders/create
-orders/updated
-orders/cancelled
-refunds/create
-```
-
-Whether and how these are sent to advertising platforms is handled separately per platform capability and reporting strategy.
-
-The internal database should always preserve the true Shopify order state.
-
----
-
-# Security
-
-Required controls:
-
-- HTTPS only
-- Shopify webhook HMAC verification
-- rate limiting on public ingestion routes
-- strict request schemas
-- maximum payload limits
-- no Meta access token in client JavaScript
-- no Shopify secret in client JavaScript
-- secrets stored in Secret Manager
-- admin/debug routes protected separately
-- database not publicly exposed
-- parameterized SQL / ORM
-- structured audit logging
-- minimize stored personal data
-- retention policy for raw identifiers
-
----
-
-# Failure scenarios
-
-## Browser tracking fails
-
-The Shopify server-side order webhook can still create the order record.
-
-Identity quality may be weaker, but the conversion is not silently lost from Magnum's internal order pipeline.
-
-## Meta API is down
-
-The event remains queued and retries later with the same event ID.
-
-## Magnum API instance restarts
-
-No important state is lost because Cloud Run is stateless and identity/dedupe state is stored in PostgreSQL.
-
-## Pub/Sub delivers the same message twice
-
-The worker uses database idempotency and the same deterministic event ID, so duplicate queue delivery does not become a duplicate purchase.
-
-## Shopify sends the same webhook twice
-
-Webhook/event uniqueness is checked before creating another logical order event.
-
-## `fbclid` disappeared before checkout
-
-If captured legitimately during the landing session, the visitor identity already preserves the related click context server-side.
-
----
-
-# Planned API surface
-
-```text
-GET  /health
-POST /v1/identify
-POST /v1/events
-POST /v1/purchase
-
-POST /webhooks/shopify/orders/create
-POST /webhooks/shopify/orders/updated
-POST /webhooks/shopify/orders/cancelled
-POST /webhooks/shopify/refunds/create
-
-GET  /internal/orders/:id/attribution
-GET  /internal/events/:eventId
-```
-
-Public and internal endpoints will use different authorization rules.
-
----
-
-# Planned repository structure
-
-```text
-src/
-  browser/
-    pixel.ts
-    identity.ts
-    consent.ts
-    attribution.ts
-
-  server/
-    api.ts
-    webhooks/
-      shopify.ts
-    routes/
-      identify.ts
-      events.ts
-
-  core/
-    identity.ts
-    attribution.ts
-    events.ts
-    hashing.ts
-    money.ts
-
-  platforms/
-    meta/
-      capi.ts
-      payload.ts
-      dedupe.ts
-
-  workers/
-    delivery.ts
-
-  db/
-    schema.ts
-    queries.ts
-
-  observability/
-    logging.ts
-    metrics.ts
-```
-
----
-
-# Deployment environments
-
-## Development
-
-Local machine / local PostgreSQL where required.
-
-## Staging
-
-```text
-staging-track.teenwear.eu
-```
-
-Uses Meta Test Events and separate staging secrets/database.
-
-No production Pixel dataset should be polluted during integration testing.
-
-## Production
-
-```text
-track.teenwear.eu
-```
-
-Production Cloud Run, PostgreSQL, Pub/Sub and Meta credentials.
-
----
-
-# Deployment flow
-
-Planned flow:
-
-```text
-GitHub
-  |
-  v
-GitHub Actions
-  |
-  +--> tests
-  +--> typecheck
-  +--> build container
-  |
-  v
-Google Artifact Registry
-  |
-  v
-Cloud Run deploy
-```
-
-Database migrations must run as an explicit controlled deployment step.
-
----
-
-# Development phases
-
-## Phase 1 — Core tracking engine
-
-- [x] repository initialization
-- [x] visitor/session identity primitives
-- [x] first/last touch model
-- [x] fbclid/fbc/fbp handling primitives
-- [x] normalized Meta user data
-- [x] deterministic event IDs
-- [x] basic Meta CAPI sender
-- [x] initial browser identify layer
-- [ ] production database persistence
-
-## Phase 2 — Shopify identity bridge
-
-- [ ] Shopify Web Pixel
-- [ ] Shopify consent integration
-- [ ] cart token mapping
-- [ ] checkout mapping
-- [ ] checkout/customer identity enrichment
-- [ ] signed Shopify order webhooks
-- [ ] order-to-visitor resolver
-
-## Phase 3 — Durable production delivery
-
-- [ ] PostgreSQL schema + migrations
-- [ ] Pub/Sub topics/subscriptions
-- [ ] Cloud Run delivery worker
-- [ ] retry rules
-- [ ] dead-letter handling
-- [ ] database idempotency
-
-## Phase 4 — Attribution diagnostics
-
-- [ ] per-order identity report
-- [ ] matching-field coverage metrics
-- [ ] first-touch / last-touch debugger
-- [ ] Meta response history
-- [ ] failed-event replay
-- [ ] internal dashboard/API
-
-## Phase 5 — Production rollout
-
-- [ ] Google Cloud project configuration
-- [ ] Frankfurt deployment
-- [ ] `track.teenwear.eu` DNS
-- [ ] TLS
-- [ ] staging integration test
-- [ ] Meta Test Events validation
-- [ ] Shopify webhook validation
-- [ ] controlled production shadow test
-- [ ] compare Magnum vs existing tracking
-- [ ] production cutover only after data validation
-
----
-
-# The core rule
-
-Magnum should optimize **signal quality, persistence and truthfulness**, not manufacture attribution.
-
-The system wins if it can answer this for every purchase:
-
-```text
-Where did this order come from?
-Which visitor/session/cart/checkout produced it?
-Which legitimate Meta identifiers did we preserve?
-Exactly what did we send to Meta?
-Did Meta accept it?
-Was it retried or deduplicated?
-```
-
-If Magnum can answer those questions reliably, we no longer have to blindly trust a black-box tracking app.
