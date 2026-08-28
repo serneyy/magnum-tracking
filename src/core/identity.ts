@@ -51,7 +51,10 @@ export function sha256(value?: string): string | undefined {
 
 export function buildFbc(fbclid?: string, timestampMs = Date.now()): string | undefined {
   if (!fbclid) return undefined;
-  return `fb.1.${Math.floor(timestampMs / 1000)}.${fbclid}`;
+
+  // Meta's fbc format uses the click/cookie creation timestamp in milliseconds.
+  // Keep this value stable for a captured click instead of rebuilding it later.
+  return `fb.1.${Math.floor(timestampMs)}.${fbclid}`;
 }
 
 export function mergeTouchpoint(identity: Identity, touch: Touchpoint): Identity {
