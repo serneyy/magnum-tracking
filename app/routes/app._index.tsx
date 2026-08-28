@@ -5,6 +5,8 @@ import { Form, useActionData, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 
+const TELENCE_LOGO_URL = "https://cdn.shopify.com/s/files/1/0685/9060/0494/files/m_2.jpg?v=1787914555";
+
 type ActionData =
   | { ok: true; webPixelId: string; alreadyActive?: boolean }
   | { ok: false; error: string };
@@ -109,7 +111,13 @@ export default function Home() {
   return (
     <main style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 24px 60px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
-        <div style={{ width: 38, height: 38, borderRadius: 10, background: "#111", color: "#fff", display: "grid", placeItems: "center", fontWeight: 800 }}>T</div>
+        <img
+          src={TELENCE_LOGO_URL}
+          alt="Telence"
+          width={42}
+          height={42}
+          style={{ display: "block", width: 42, height: 42, borderRadius: 10, objectFit: "cover" }}
+        />
         <div>
           <h1 style={{ margin: 0, fontSize: 24, letterSpacing: "-0.04em" }}>Telence</h1>
           <div style={{ color: "#6d7175", fontSize: 13 }}>Identity & conversion intelligence</div>
@@ -125,7 +133,13 @@ export default function Home() {
               Storefront identity, Shopify carts, checkout tokens, customer data and paid-media signals are resolved into one durable graph.
             </p>
           </div>
-          <div style={{ width: 86, height: 86, border: "1px solid #333", borderRadius: 20, display: "grid", placeItems: "center", fontSize: 34 }}>🧠</div>
+          <img
+            src={TELENCE_LOGO_URL}
+            alt="Telence Brain"
+            width={86}
+            height={86}
+            style={{ display: "block", width: 86, height: 86, borderRadius: 18, objectFit: "cover", border: "1px solid #333" }}
+          />
         </div>
       </section>
 
