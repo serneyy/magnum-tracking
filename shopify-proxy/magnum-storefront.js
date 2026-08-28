@@ -1,6 +1,6 @@
 /*
  * Magnum Tracking - Storefront proxy collector
- * Version: 0.1.0
+ * Version: 0.1.1
  *
  * Intended production installation: Shopify Theme App Extension / App Embed.
  * Browser requests stay on the merchant storefront origin and are sent to:
@@ -16,7 +16,7 @@
   'use strict';
 
   const MAGNUM = Object.freeze({
-    VERSION: '0.1.0',
+    VERSION: '0.1.1',
     PROXY_ENDPOINT: '/apps/magnum/e',
     STORAGE: {
       VISITOR_ID: 'mg_vid',
@@ -238,24 +238,31 @@
   }
 
   function installXhrCartObserver() {
-    if (!window.XMLHttpRequest) return;
-    const OriginalXHR = window.XMLHttpRequest;
+    const proto = window.XMLHttpRequest?.prototype;
+    if (!proto || proto.__magnumObserved) return;
 
-    window.XMLHttpRequest = function MagnumXHR() {
-      const xhr = new OriginalXHR();
-      let requestUrl = '';
-      const open = xhr.open;
-      xhr.open = function(method, url) {
-        requestUrl = String(url || '');
-        return open.apply(xhr, arguments);
-      };
-      xhr.addEventListener('loadend', () => {
-        if (/\/cart\/(add|change|update|clear)(\.js)?(?:\?|$)/.test(requestUrl)) {
-          scheduleCartSync('storefront_xhr');
-        }
-      });
-      return xhr;
+    const originalOpen = proto.open;
+    const originalSend = proto.send;
+
+    proto.open = function magnumObservedOpen(method, url) {
+      this.__magnumUrl = String(url || '');
+      return originalOpen.apply(this, arguments);
     };
+
+    proto.send = function magnumObservedSend() {
+      if (!this.__magnumListenerAdded) {
+        this.__magnumListenerAdded = true;
+        this.addEventListener('loadend', () => {
+          const url = this.__magnumUrl || '';
+          if (/\/cart\/(add|change|update|clear)(\.js)?(?:\?|$)/.test(url)) {
+            scheduleCartSync('storefront_xhr');
+          }
+        });
+      }
+      return originalSend.apply(this, arguments);
+    };
+
+    proto.__magnumObserved = true;
   }
 
   function start() {
