@@ -1,7 +1,8 @@
 @echo off
 setlocal
-cd /d "%~dp0"
-title Telence Shopify Development
+set "TELENCE_DIR=%~dp0"
+cd /d "%TELENCE_DIR%"
+title Telence Launcher
 
 echo.
 echo ==========================================
@@ -38,31 +39,31 @@ if not exist "node_modules" (
 )
 
 echo.
-echo [4/4] Starting Telence in Shopify...
+echo [4/4] Opening the Telence development server...
 echo.
-echo Shopify may open your browser and ask you to:
+echo IMPORTANT:
+echo   A second window called "TELENCE DEV SERVER - KEEP OPEN" will open.
+echo   DO NOT close that window while using Telence inside Shopify.
+echo   If that window is closed, Shopify will show trycloudflare.com refused to connect.
+echo.
+echo In the new window Shopify may ask you to:
 echo   1. Sign in to Shopify
 echo   2. Choose your organization
-echo   3. Create or select the Telence Development app
+echo   3. Create or select Telence Development
 echo   4. Choose your development store
 echo.
-echo After that, keep this window OPEN while testing Telence.
+
+start "TELENCE DEV SERVER - KEEP OPEN" cmd /k "cd /d ""%TELENCE_DIR%"" && shopify app dev --reset"
+if errorlevel 1 goto :failed
+
+echo Telence dev server was opened in a separate window.
+echo Wait until that window says the dev preview is ready.
+echo Then refresh Telence in Shopify Admin.
 echo.
-
-call shopify app dev --reset
-if errorlevel 1 (
-  echo.
-  echo Shopify could not start the app automatically.
-  echo Trying the app-link flow once...
-  echo.
-  call shopify app config link
-  if errorlevel 1 goto :failed
-  echo.
-  call shopify app dev --reset
-  if errorlevel 1 goto :failed
-)
-
-goto :end
+echo You can close THIS launcher window. Keep the DEV SERVER window open.
+echo.
+pause
+exit /b 0
 
 :failed
 echo.
@@ -74,8 +75,3 @@ echo ==========================================
 echo.
 pause
 exit /b 1
-
-:end
-echo.
-echo Telence development session ended.
-pause
