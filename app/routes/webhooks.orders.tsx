@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
@@ -12,7 +13,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       shop,
       topic,
       shopifyOrderId: orderId,
-      payload: body,
+      payload: body as Prisma.InputJsonValue,
     },
   });
 
